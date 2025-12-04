@@ -1,2 +1,6 @@
 Initialized process control blocks   
-allocPcb: allocated more than MAXPROC entries   
+allocPcb ok   
+freed 10 entries   
+Inserting...   
+inserted 10 elements   
+emptyProcQ: unexpected TRUE
