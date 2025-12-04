@@ -1,0 +1,4 @@
+/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles/MultiPandOS.dir
+/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles/MultiPandOSuRISCV.dir
+/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles/edit_cache.dir
+/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles/rebuild_cache.dir
