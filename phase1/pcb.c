@@ -53,23 +53,70 @@ pcb_t* allocPcb() {
     return new_pcb;
 }
 
-
+/* Create an empty PCB list */ 
 void mkEmptyProcQ(struct list_head* head) {
+    INIT_LIST_HEAD(head);
 }
 
+/* Check if the PCB list "head" is empty */
 int emptyProcQ(struct list_head* head) {
+    return list_empty(head);
 }
 
+/* Insert PCB "p" in the list "head"*/
 void insertProcQ(struct list_head* head, pcb_t* p) {
+    struct list_head* pos;
+    pcb_t* iter;
+
+    // inserimento ordinato per priorità (p_prio più alto davanti)
+    list_for_each(pos, head) {
+        iter = container_of(pos, pcb_t, p_list);
+        if (p->p_prio > iter->p_prio) {
+            __list_add(&p->p_list, pos->prev, pos);
+            return;
+        }
+    }
+    // se non ha priorità maggiore, va in coda
+    list_add_tail(&p->p_list, head);
 }
 
+/* Return the first PCB in the list "head" without removing it */
 pcb_t* headProcQ(struct list_head* head) {
+    if (list_empty(head)) {
+        return NULL;
+    }
+    // head->next è il primo nodo della lista
+    return container_of(head->next, pcb_t, p_list);
 }
 
+/* Remove and return the first PCB in the list "head" */
 pcb_t* removeProcQ(struct list_head* head) {
+    struct list_head* first;
+    pcb_t* p;
+
+    if (list_empty(head)) {
+        return NULL;
+    }
+
+    first = head->next;
+    list_del(first);
+    p = container_of(first, pcb_t, p_list);
+    return p;
 }
 
+/* Remove PCB "p" from the list "head" */
 pcb_t* outProcQ(struct list_head* head, pcb_t* p) {
+    struct list_head* pos;
+    pcb_t* iter;
+
+    list_for_each(pos, head) {
+        iter = container_of(pos, pcb_t, p_list);
+        if (iter == p) {
+            list_del(pos);
+            return p;
+        }
+    }
+    return NULL; // PCB non trovato
 }
 
 int emptyChild(pcb_t* p) {
