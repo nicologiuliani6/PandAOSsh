@@ -129,8 +129,8 @@ void insertChild(pcb_t *prnt, pcb_t *p) {
 pcb_t* removeChild(pcb_t* p) {
     if (!p || list_empty(&p->p_child)) return NULL;  // Nessun figlio da rimuovere
     struct list_head *first = p->p_child.next; // Prende il primo elemento della lista dei figli
-    pcb_t *child = container_of(first, pcb_t, p_list); // Ottieni il PCB
-    list_del(&child->p_list); // Rimuovi dalla lista dei figli
+    pcb_t *child = container_of(first, pcb_t, p_list); // Ottiene il PCB
+    list_del(&child->p_list); // Rimuove dalla lista dei figli
     child->p_parent = NULL; // Aggiorna il puntatore al padre
     INIT_LIST_HEAD(&child->p_list); // Inizializza p_list
     return child;
