@@ -28,9 +28,7 @@ pcb_t* allocPcb() {
     struct list_head* pos;
     pcb_t* new_pcb;
 
-    if (list_empty(&pcbFree_h)) {
-        return NULL;  // nessun PCB disponibile
-    }
+    if (list_empty(&pcbFree_h)) return NULL;  // nessun PCB disponibile
 
     // prendi il primo elemento dalla lista
     pos = pcbFree_h.next;
@@ -82,9 +80,7 @@ void insertProcQ(struct list_head* head, pcb_t* p) {
 
 /* Return the first PCB in the list "head" without removing it */
 pcb_t* headProcQ(struct list_head* head) {
-    if (list_empty(head)) {
-        return NULL;
-    }
+    if (list_empty(head)) return NULL;
     // head->next è il primo nodo della lista
     return container_of(head->next, pcb_t, p_list);
 }
@@ -94,9 +90,7 @@ pcb_t* removeProcQ(struct list_head* head) {
     struct list_head* first;
     pcb_t* p;
 
-    if (list_empty(head)) {
-        return NULL;
-    }
+    if (list_empty(head)) return NULL;
 
     first = head->next;
     list_del(first);
@@ -119,14 +113,35 @@ pcb_t* outProcQ(struct list_head* head, pcb_t* p) {
     return NULL; // PCB non trovato
 }
 
+/* Check if the PCB "p" has children */
 int emptyChild(pcb_t* p) {
+    return list_empty(&p->p_child);
 }
 
-void insertChild(pcb_t* prnt, pcb_t* p) {
+/* Insert the PCB child "p" into the PCB parent "prnt" */
+void insertChild(pcb_t *prnt, pcb_t *p) {
+    p->p_parent = prnt; // Imposta il puntatore al padre
+    INIT_LIST_HEAD(&p->p_list); // Inizializza la list_head del figlio
+    list_add_tail(&p->p_list, &prnt->p_child); // Inserisce il figlio in coda
 }
 
+/* Remove and return the first child of the PCB "p" */
 pcb_t* removeChild(pcb_t* p) {
+    if (!p || list_empty(&p->p_child)) return NULL;  // Nessun figlio da rimuovere
+    struct list_head *first = p->p_child.next; // Prende il primo elemento della lista dei figli
+    pcb_t *child = container_of(first, pcb_t, p_list); // Ottieni il PCB
+    list_del(&child->p_list); // Rimuovi dalla lista dei figli
+    child->p_parent = NULL; // Aggiorna il puntatore al padre
+    INIT_LIST_HEAD(&child->p_list); // Inizializza p_list
+    return child;
 }
 
+/* Remove and return the PCB "p" from its parent's children list */
 pcb_t* outChild(pcb_t* p) {
+    if (!p || !p->p_parent) return NULL;  // p non ha padre, non può essere rimosso
+    list_del(&p->p_list); // Rimuove p dalla lista dei figli del padre
+    p->p_parent = NULL; // Aggiorna il puntatore al padre
+    INIT_LIST_HEAD(&p->p_list); // Inizializza p_list
+    return p;
 }
+
