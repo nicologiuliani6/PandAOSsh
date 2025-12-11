@@ -28,7 +28,7 @@ int insertBlocked(int* semAdd, pcb_t* p) {
             return 0;
         }
     }
-    // SEMD non trovato, usa uno dalla free list
+    // semd non trovato, usa uno dalla free list
     if (list_empty(&semdFree_h)) return 1; // nessun semd disponibile
     s = container_of(semdFree_h.next, semd_t, s_link);
     list_del(&s->s_link);
@@ -51,7 +51,7 @@ pcb_t* removeBlocked(int* semAdd) {
             pcb_t* p = container_of(s->s_procq.next, pcb_t, p_list);
             list_del(&p->p_list);
             p->p_semAdd = NULL;
-            // Se la coda diventa vuota, libera il semd
+            // se la coda diventa vuota, libera il semd
             if (list_empty(&s->s_procq)) {
                 list_del(&s->s_link);
                 s->s_key = NULL;
@@ -72,7 +72,7 @@ pcb_t* outBlocked(pcb_t* p) {
         if (s->s_key == p->p_semAdd) {
             list_del(&p->p_list);
             p->p_semAdd = NULL;
-            // Se la coda diventa vuota, libera il semd
+            // se la coda diventa vuota, libera il semd
             if (list_empty(&s->s_procq)) {
                 list_del(&s->s_link);
                 s->s_key = NULL;
