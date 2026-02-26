@@ -179,7 +179,7 @@
 #define BYTELENGTH 8
 
 #define PSECOND    100000
-#define TIMESLICE  5000 /* length of proc's time slice	*/
+#define TIMESLICE  5000000 /* length of proc's time slice	*/
 #define NEVER      0x7FFFFFFF
 #define SECOND     1000000
 #define STATESIZE  0x8C

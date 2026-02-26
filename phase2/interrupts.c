@@ -61,6 +61,8 @@ static void copyState(state_t *dst, state_t *src) {
 #define TERM_TRANSM_STATUS(base)  ((base)[2])
 #define TERM_TRANSM_COMMAND(base) ((base)[3])
 
+#define MIP_BIT(il_no) (1u << (il_no))
+
 static int getHighestPriorityDevice(unsigned int bitmap) {
     for (int i = 0; i < 8; i++) {
         if (bitmap & (1 << i)) return i;
@@ -69,14 +71,25 @@ static int getHighestPriorityDevice(unsigned int bitmap) {
 }
 
 void interruptHandler(void) {
-    state_t *savedState = (state_t *) BIOSDATAPAGE;
-    unsigned int cause = getCAUSE();
+    state_t     *savedState = (state_t *) BIOSDATAPAGE;
+    unsigned int mip        = getMIP();
 
     debug_print("interruptHandler: ");
-    debug_hex("cause=", cause);
+    debug_hex("mip=", mip);
 
-    if (CAUSE_IP_GET(cause, IL_CPUTIMER)) {
+    /* ------------------------------------------------------------------ */
+    /* PLT (processor local timer / timeslice)                             */
+    /* ------------------------------------------------------------------ */
+    if (mip & MIP_BIT(IL_CPUTIMER)) {
+        debug_hex("TIMESLICE=",     (unsigned int)TIMESLICE);
+        debug_hex("TIMESCALE=",     (unsigned int)(*((cpu_t *)TIMESCALEADDR)));
+        debug_hex("timer value=",   (unsigned int)(TIMESLICE * (*((cpu_t *)TIMESCALEADDR))));
         debug_print("-> PLT (timeslice expired)\n");
+        debug_hex("PLT savedState->pc_epc=", savedState->pc_epc);
+        debug_hex("PLT savedState->status=", savedState->status);
+        debug_hex("PLT savedState->reg_sp=", savedState->reg_sp);
+        debug_hex("PLT currentProcess=",     (unsigned int)currentProcess);
+
         setTIMER(TIMESLICE * (*((cpu_t *)TIMESCALEADDR)));
 
         if (currentProcess != NULL) {
@@ -91,13 +104,16 @@ void interruptHandler(void) {
         return;
     }
 
-    if (CAUSE_IP_GET(cause, IL_TIMER)) {
+    /* ------------------------------------------------------------------ */
+    /* Interval Timer (pseudo-clock tick ogni 100ms)                       */
+    /* ------------------------------------------------------------------ */
+    if (mip & MIP_BIT(IL_TIMER)) {
         debug_print("-> Interval Timer (pseudo-clock)\n");
         LDIT(PSECOND);
 
         pcb_t *unblocked;
         while ((unblocked = removeBlocked(&devSems[PSEUDOCLK_SEM])) != NULL) {
-            unblocked->p_semAdd = NULL;
+            unblocked->p_semAdd   = NULL;
             unblocked->p_s.reg_a0 = 0;
             insertProcQ(&readyQueue, unblocked);
             softBlockCount--;
@@ -114,6 +130,9 @@ void interruptHandler(void) {
         return;
     }
 
+    /* ------------------------------------------------------------------ */
+    /* Device interrupt                                                     */
+    /* ------------------------------------------------------------------ */
     debug_print("-> device interrupt\n");
 
     int intLineNo = -1;
@@ -121,13 +140,15 @@ void interruptHandler(void) {
     int semIdx    = -1;
 
     for (int line = IL_DISK; line <= IL_TERMINAL; line++) {
-        unsigned int bitmap = INT_BITMAP(line);
-        if (bitmap != 0) {
-            intLineNo = line;
-            devNo = getHighestPriorityDevice(bitmap);
-            debug_hex("device line=", (unsigned int)intLineNo);
-            debug_hex("device devNo=", (unsigned int)devNo);
-            break;
+        if (mip & MIP_BIT(line)) {
+            unsigned int bitmap = INT_BITMAP(line);
+            if (bitmap != 0) {
+                intLineNo = line;
+                devNo = getHighestPriorityDevice(bitmap);
+                debug_hex("device line=", (unsigned int)intLineNo);
+                debug_hex("device devNo=", (unsigned int)devNo);
+                break;
+            }
         }
     }
 
@@ -140,8 +161,8 @@ void interruptHandler(void) {
 
     if (intLineNo == IL_TERMINAL) {
         unsigned int *termBase = DEV_REG_BASE(intLineNo, devNo);
-        unsigned int txStatus = TERM_TRANSM_STATUS(termBase) & 0xFF;
-        unsigned int rxStatus = TERM_RECV_STATUS(termBase)   & 0xFF;
+        unsigned int  txStatus = TERM_TRANSM_STATUS(termBase) & 0xFF;
+        unsigned int  rxStatus = TERM_RECV_STATUS(termBase)   & 0xFF;
 
         debug_hex("terminal txStatus=", txStatus);
         debug_hex("terminal rxStatus=", rxStatus);
@@ -179,9 +200,10 @@ void interruptHandler(void) {
         } else {
             debug_print("terminal: no pending TX or RX\n");
         }
+
     } else {
-        unsigned int *devBase = DEV_REG_BASE(intLineNo, devNo);
-        unsigned int savedStatus = DEV_STATUS(devBase);
+        unsigned int *devBase     = DEV_REG_BASE(intLineNo, devNo);
+        unsigned int  savedStatus = DEV_STATUS(devBase);
         debug_hex("device status=", savedStatus);
         DEV_COMMAND(devBase) = ACK;
         semIdx = DEV_SEM_BASE(intLineNo, devNo);

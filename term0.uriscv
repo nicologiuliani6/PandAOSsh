@@ -3,6 +3,11 @@
 entrato in removeProcQ
 esco da removeProcQ
  1.2 1.3 1.4 
-pc_epc: 20004978
+pc_epc: 20004530
 reg_sp: 20040000
 status: 00001880
+[EXC] cause=80000015
+[EXC] excCode=00000005
+interruptHandler: mip=00200008
+-> Interval Timer (pseudo-clock)
+IT: returning to currentProcess

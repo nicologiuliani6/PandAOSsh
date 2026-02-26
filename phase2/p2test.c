@@ -138,12 +138,22 @@ void uTLB_RefillHandler() {
     LDST((state_t*) BIOSDATAPAGE);
 }
 
-
+static void debug_print5(const char *msg) {
+    unsigned int *command = (unsigned int *)(0x10000254 + 3*4);
+    
+    while (*msg != '\0') {
+        *command = 2 | (((unsigned int)*msg) << 8);
+        /* delay */
+        for (volatile int i = 0; i < 10000; i++);
+        msg++;
+    }
+}
 /*********************************************************************/
 /*                                                                   */
 /*                 p1 -- the root process                            */
 /*                                                                   */
-void test() {    
+void test() {   
+    debug_print5("avvio test\n"); 
     SYSCALL(VERHOGEN, (int)&sem_testsem, 0, 0); /* V(sem_testsem)   */
     SYSCALL(VERHOGEN, (int)&sem_testsem, 0, 0);
     SYSCALL(VERHOGEN, (int)&sem_testsem, 0, 0);
