@@ -1,0 +1,28 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/usr/local/share/uriscv/crtso.S
+uriscv/arch.h
+/usr/local/share/uriscv/uriscv/arch.h
+uriscv/aout.h
+/usr/local/share/uriscv/uriscv/aout.h
+uriscv/bios.h
+/usr/local/share/uriscv/uriscv/bios.h
+uriscv/aout.h
+/usr/local/share/uriscv/uriscv/aout.h
+
+/usr/local/share/uriscv/liburiscv.S
+uriscv/arch.h
+/usr/local/share/uriscv/uriscv/arch.h
+uriscv/bios.h
+/usr/local/share/uriscv/uriscv/bios.h
+uriscv/cpu.h
+/usr/local/share/uriscv/uriscv/cpu.h
+uriscv/const.h
+/usr/local/share/uriscv/uriscv/const.h
+

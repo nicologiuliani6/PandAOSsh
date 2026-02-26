@@ -1,6 +1,5 @@
 /*
  * exceptions.c
- *
  * Gestisce tutte le eccezioni del Nucleo (esclusi gli interrupt,
  * gestiti in interrupts.c):
  *
