@@ -53,6 +53,8 @@ set(CMAKE_MAKEFILE_PRODUCTS
 
 # Dependency information for all targets:
 set(CMAKE_DEPEND_INFO_FILES
-  "CMakeFiles/MultiPandOS.dir/DependInfo.cmake"
-  "CMakeFiles/MultiPandOSuRISCV.dir/DependInfo.cmake"
+  "CMakeFiles/MultiPandOS_phase1.dir/DependInfo.cmake"
+  "CMakeFiles/phase1.dir/DependInfo.cmake"
+  "CMakeFiles/MultiPandOS_phase2.dir/DependInfo.cmake"
+  "CMakeFiles/phase2.dir/DependInfo.cmake"
   )

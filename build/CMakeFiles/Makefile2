@@ -63,13 +63,11 @@ CMAKE_BINARY_DIR = "/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build"
 # Directory level rules for the build root directory
 
 # The main recursive "all" target.
-all: CMakeFiles/MultiPandOS.dir/all
-all: CMakeFiles/MultiPandOSuRISCV.dir/all
+all:
 .PHONY : all
 
 # The main recursive "codegen" target.
-codegen: CMakeFiles/MultiPandOS.dir/codegen
-codegen: CMakeFiles/MultiPandOSuRISCV.dir/codegen
+codegen:
 .PHONY : codegen
 
 # The main recursive "preinstall" target.
@@ -77,73 +75,139 @@ preinstall:
 .PHONY : preinstall
 
 # The main recursive "clean" target.
-clean: CMakeFiles/MultiPandOS.dir/clean
-clean: CMakeFiles/MultiPandOSuRISCV.dir/clean
+clean: CMakeFiles/MultiPandOS_phase1.dir/clean
+clean: CMakeFiles/phase1.dir/clean
+clean: CMakeFiles/MultiPandOS_phase2.dir/clean
+clean: CMakeFiles/phase2.dir/clean
 .PHONY : clean
 
 #=============================================================================
-# Target rules for target CMakeFiles/MultiPandOS.dir
+# Target rules for target CMakeFiles/MultiPandOS_phase1.dir
 
 # All Build rule for target.
-CMakeFiles/MultiPandOS.dir/all:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS.dir/build.make CMakeFiles/MultiPandOS.dir/depend
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS.dir/build.make CMakeFiles/MultiPandOS.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir="/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" --progress-num=1,2,3,4,5,6,7 "Built target MultiPandOS"
-.PHONY : CMakeFiles/MultiPandOS.dir/all
+CMakeFiles/MultiPandOS_phase1.dir/all:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir="/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" --progress-num=1,2,3,4,5,6,7 "Built target MultiPandOS_phase1"
+.PHONY : CMakeFiles/MultiPandOS_phase1.dir/all
 
 # Build rule for subdir invocation for target.
-CMakeFiles/MultiPandOS.dir/rule: cmake_check_build_system
+CMakeFiles/MultiPandOS_phase1.dir/rule: cmake_check_build_system
 	$(CMAKE_COMMAND) -E cmake_progress_start "/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" 7
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/MultiPandOS.dir/all
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/MultiPandOS_phase1.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start "/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" 0
-.PHONY : CMakeFiles/MultiPandOS.dir/rule
+.PHONY : CMakeFiles/MultiPandOS_phase1.dir/rule
 
 # Convenience name for target.
-MultiPandOS: CMakeFiles/MultiPandOS.dir/rule
-.PHONY : MultiPandOS
+MultiPandOS_phase1: CMakeFiles/MultiPandOS_phase1.dir/rule
+.PHONY : MultiPandOS_phase1
 
 # codegen rule for target.
-CMakeFiles/MultiPandOS.dir/codegen:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS.dir/build.make CMakeFiles/MultiPandOS.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir="/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" --progress-num=1,2,3,4,5,6,7 "Finished codegen for target MultiPandOS"
-.PHONY : CMakeFiles/MultiPandOS.dir/codegen
+CMakeFiles/MultiPandOS_phase1.dir/codegen:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/codegen
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir="/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" --progress-num=1,2,3,4,5,6,7 "Finished codegen for target MultiPandOS_phase1"
+.PHONY : CMakeFiles/MultiPandOS_phase1.dir/codegen
 
 # clean rule for target.
-CMakeFiles/MultiPandOS.dir/clean:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS.dir/build.make CMakeFiles/MultiPandOS.dir/clean
-.PHONY : CMakeFiles/MultiPandOS.dir/clean
+CMakeFiles/MultiPandOS_phase1.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/clean
+.PHONY : CMakeFiles/MultiPandOS_phase1.dir/clean
 
 #=============================================================================
-# Target rules for target CMakeFiles/MultiPandOSuRISCV.dir
+# Target rules for target CMakeFiles/phase1.dir
 
 # All Build rule for target.
-CMakeFiles/MultiPandOSuRISCV.dir/all: CMakeFiles/MultiPandOS.dir/all
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOSuRISCV.dir/build.make CMakeFiles/MultiPandOSuRISCV.dir/depend
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOSuRISCV.dir/build.make CMakeFiles/MultiPandOSuRISCV.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir="/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" --progress-num= "Built target MultiPandOSuRISCV"
-.PHONY : CMakeFiles/MultiPandOSuRISCV.dir/all
+CMakeFiles/phase1.dir/all: CMakeFiles/MultiPandOS_phase1.dir/all
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase1.dir/build.make CMakeFiles/phase1.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase1.dir/build.make CMakeFiles/phase1.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir="/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" --progress-num=19 "Built target phase1"
+.PHONY : CMakeFiles/phase1.dir/all
 
 # Build rule for subdir invocation for target.
-CMakeFiles/MultiPandOSuRISCV.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start "/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" 7
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/MultiPandOSuRISCV.dir/all
+CMakeFiles/phase1.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start "/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" 8
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/phase1.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start "/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" 0
-.PHONY : CMakeFiles/MultiPandOSuRISCV.dir/rule
+.PHONY : CMakeFiles/phase1.dir/rule
 
 # Convenience name for target.
-MultiPandOSuRISCV: CMakeFiles/MultiPandOSuRISCV.dir/rule
-.PHONY : MultiPandOSuRISCV
+phase1: CMakeFiles/phase1.dir/rule
+.PHONY : phase1
 
 # codegen rule for target.
-CMakeFiles/MultiPandOSuRISCV.dir/codegen: CMakeFiles/MultiPandOS.dir/all
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOSuRISCV.dir/build.make CMakeFiles/MultiPandOSuRISCV.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir="/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" --progress-num= "Finished codegen for target MultiPandOSuRISCV"
-.PHONY : CMakeFiles/MultiPandOSuRISCV.dir/codegen
+CMakeFiles/phase1.dir/codegen: CMakeFiles/MultiPandOS_phase1.dir/all
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase1.dir/build.make CMakeFiles/phase1.dir/codegen
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir="/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" --progress-num=19 "Finished codegen for target phase1"
+.PHONY : CMakeFiles/phase1.dir/codegen
 
 # clean rule for target.
-CMakeFiles/MultiPandOSuRISCV.dir/clean:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOSuRISCV.dir/build.make CMakeFiles/MultiPandOSuRISCV.dir/clean
-.PHONY : CMakeFiles/MultiPandOSuRISCV.dir/clean
+CMakeFiles/phase1.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase1.dir/build.make CMakeFiles/phase1.dir/clean
+.PHONY : CMakeFiles/phase1.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/MultiPandOS_phase2.dir
+
+# All Build rule for target.
+CMakeFiles/MultiPandOS_phase2.dir/all:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir="/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" --progress-num=8,9,10,11,12,13,14,15,16,17,18 "Built target MultiPandOS_phase2"
+.PHONY : CMakeFiles/MultiPandOS_phase2.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/MultiPandOS_phase2.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start "/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" 11
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/MultiPandOS_phase2.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start "/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" 0
+.PHONY : CMakeFiles/MultiPandOS_phase2.dir/rule
+
+# Convenience name for target.
+MultiPandOS_phase2: CMakeFiles/MultiPandOS_phase2.dir/rule
+.PHONY : MultiPandOS_phase2
+
+# codegen rule for target.
+CMakeFiles/MultiPandOS_phase2.dir/codegen:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/codegen
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir="/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" --progress-num=8,9,10,11,12,13,14,15,16,17,18 "Finished codegen for target MultiPandOS_phase2"
+.PHONY : CMakeFiles/MultiPandOS_phase2.dir/codegen
+
+# clean rule for target.
+CMakeFiles/MultiPandOS_phase2.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/clean
+.PHONY : CMakeFiles/MultiPandOS_phase2.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/phase2.dir
+
+# All Build rule for target.
+CMakeFiles/phase2.dir/all: CMakeFiles/MultiPandOS_phase2.dir/all
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase2.dir/build.make CMakeFiles/phase2.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase2.dir/build.make CMakeFiles/phase2.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir="/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" --progress-num=20 "Built target phase2"
+.PHONY : CMakeFiles/phase2.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/phase2.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start "/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" 12
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/phase2.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start "/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" 0
+.PHONY : CMakeFiles/phase2.dir/rule
+
+# Convenience name for target.
+phase2: CMakeFiles/phase2.dir/rule
+.PHONY : phase2
+
+# codegen rule for target.
+CMakeFiles/phase2.dir/codegen: CMakeFiles/MultiPandOS_phase2.dir/all
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase2.dir/build.make CMakeFiles/phase2.dir/codegen
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir="/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles" --progress-num=20 "Finished codegen for target phase2"
+.PHONY : CMakeFiles/phase2.dir/codegen
+
+# clean rule for target.
+CMakeFiles/phase2.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase2.dir/build.make CMakeFiles/phase2.dir/clean
+.PHONY : CMakeFiles/phase2.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.

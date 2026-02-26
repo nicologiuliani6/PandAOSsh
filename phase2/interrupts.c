@@ -29,6 +29,14 @@
 /* Dichiarazione scheduler */
 extern void scheduler(void);
 
+/* Copia uno state_t word per word (memcpy non disponibile in freestanding) */
+static void copyState(state_t *dst, state_t *src) {
+    unsigned int *d = (unsigned int *) dst;
+    unsigned int *s = (unsigned int *) src;
+    for (int i = 0; i < STATESIZE / WORDLEN; i++)
+        d[i] = s[i];
+}
+
 
 /* -----------------------------------------------------------------------
  * Costanti locali per i device register
@@ -40,9 +48,28 @@ extern void scheduler(void);
 /* Macro per ricavare il bitmap della linea `line` (3..7) */
 #define INT_BITMAP(line) (*((unsigned int *)(INT_BITMAP_BASE + ((line) - 3) * 0x4)))
 
-/* Indirizzo base del primo device register */
-#define DEV_REG_ADDR(line, dev) \
-    ((devreg *)(DEV_REG_START + ((line) - 3) * 0x80 + (dev) * 0x10))
+/*
+ * Indirizzo base del device register di una linea/device.
+ * Ogni linea ha 8 device, ogni device register è 0x10 byte.
+ * Offset campi (device NON terminale):
+ *   +0x0 STATUS, +0x4 COMMAND, +0x8 DATA0, +0xC DATA1
+ * Offset campi terminale:
+ *   +0x0 RECV_STATUS, +0x4 RECV_COMMAND
+ *   +0x8 TRANSM_STATUS, +0xC TRANSM_COMMAND
+ * Usiamo unsigned int* per evitare dipendenze dalle struct di uriscv.
+ */
+#define DEV_REG_BASE(line, dev) \
+    ((unsigned int *)(START_DEVREG + ((line) - 3) * 0x80 + (dev) * 0x10))
+
+/* Offset campi device non-terminale */
+#define DEV_STATUS(base)   ((base)[0])
+#define DEV_COMMAND(base)  ((base)[1])
+
+/* Offset campi terminale */
+#define TERM_RECV_STATUS(base)    ((base)[0])
+#define TERM_RECV_COMMAND(base)   ((base)[1])
+#define TERM_TRANSM_STATUS(base)  ((base)[2])
+#define TERM_TRANSM_COMMAND(base) ((base)[3])
 
 
 /* -----------------------------------------------------------------------
@@ -73,10 +100,10 @@ void interruptHandler(void) {
     unsigned int cause = getCAUSE();
 
     /* ------------------------------------------------------------------
-     * Priorità 1: PLT (IL_CPUTIMER, linea interrupt 1)
+     * Priorità 1: PLT (IL_CPUTIMER, linea 7)
      * Il processo corrente ha esaurito il suo time slice.
      * ------------------------------------------------------------------ */
-    if (cause & (1 << IL_CPUTIMER)) {
+    if (CAUSE_IP_GET(cause, IL_CPUTIMER)) {
         /* Acknowledge: ricarica il PLT con un valore arbitrario grande */
         setTIMER(TIMESLICE * (*((cpu_t *)TIMESCALEADDR)));
 
@@ -87,7 +114,7 @@ void interruptHandler(void) {
             currentProcess->p_time += (now - startTOD);
 
             /* Salva lo stato del processo nel PCB */
-            currentProcess->p_s = *savedState;
+            copyState(&currentProcess->p_s, savedState);
 
             /* Rimette il processo nella Ready Queue */
             insertProcQ(&readyQueue, currentProcess);
@@ -102,7 +129,7 @@ void interruptHandler(void) {
     /* ------------------------------------------------------------------
      * Priorità 2: Interval Timer (IL_TIMER, linea 2) → Pseudo-clock Tick
      * ------------------------------------------------------------------ */
-    if (cause & (1 << IL_TIMER)) {
+    if (CAUSE_IP_GET(cause, IL_TIMER)) {
         /* Acknowledge: ricarica l'Interval Timer con 100ms */
         LDIT(PSECOND);
 
@@ -134,7 +161,6 @@ void interruptHandler(void) {
     int intLineNo = -1;
     int devNo     = -1;
     int semIdx    = -1;
-    int isTx      = 0; /* per terminali: 1=trasmissione, 0=ricezione */
 
     /* Scansiona le linee in ordine di priorità crescente (3=alta, 7=bassa) */
     for (int line = IL_DISK; line <= IL_TERMINAL; line++) {
@@ -163,28 +189,25 @@ void interruptHandler(void) {
     if (intLineNo == IL_TERMINAL) {
         /*
          * Terminale: due sub-device indipendenti.
-         * Il trasmettitore (TX) ha priorità sul ricevitore (RX).
-         * Struttura terminal device register:
-         *   +0x0 RECV_STATUS
-         *   +0x4 RECV_COMMAND
-         *   +0x8 TRANSM_STATUS
-         *   +0xC TRANSM_COMMAND
+         * TX ha priorità su RX.
+         * Layout registro (offset in word):
+         *   [0] RECV_STATUS, [1] RECV_COMMAND
+         *   [2] TRANSM_STATUS, [3] TRANSM_COMMAND
          */
-        termreg_t *termReg = (termreg_t *) DEV_REG_ADDR(intLineNo, devNo);
+        unsigned int *termBase = DEV_REG_BASE(intLineNo, devNo);
 
-        unsigned int txStatus = termReg->transm_status & 0xFF;
-        unsigned int rxStatus = termReg->recv_status   & 0xFF;
+        unsigned int txStatus = TERM_TRANSM_STATUS(termBase) & 0xFF;
+        unsigned int rxStatus = TERM_RECV_STATUS(termBase)   & 0xFF;
 
         /* TX ha priorità: controlla se TX ha un interrupt pendente */
         if (txStatus != READY && txStatus != BUSY) {
             /* Interrupt di trasmissione */
-            unsigned int savedStatus = termReg->transm_status;
+            unsigned int savedStatus = TERM_TRANSM_STATUS(termBase);
 
-            /* Acknowledge: scrive ACK nel comando TX */
-            termReg->transm_command = ACK;
+            /* Acknowledge TX */
+            TERM_TRANSM_COMMAND(termBase) = ACK;
 
             semIdx = TERM_TX_SEM(devNo);
-            isTx   = 1;
 
             devSems[semIdx]++;
             if (devSems[semIdx] <= 0) {
@@ -198,10 +221,10 @@ void interruptHandler(void) {
             }
         } else if (rxStatus != READY && rxStatus != BUSY) {
             /* Interrupt di ricezione */
-            unsigned int savedStatus = termReg->recv_status;
+            unsigned int savedStatus = TERM_RECV_STATUS(termBase);
 
-            /* Acknowledge */
-            termReg->recv_command = ACK;
+            /* Acknowledge RX */
+            TERM_RECV_COMMAND(termBase) = ACK;
 
             semIdx = TERM_RX_SEM(devNo);
 
@@ -220,19 +243,16 @@ void interruptHandler(void) {
     } else {
         /*
          * Device non-terminale (disk, flash, ethernet, printer).
-         * Struttura standard:
-         *   +0x0 STATUS
-         *   +0x4 COMMAND
-         *   +0x8 DATA0
-         *   +0xC DATA1
+         * Layout registro (offset in word):
+         *   [0] STATUS, [1] COMMAND, [2] DATA0, [3] DATA1
          */
-        devreg_t *devReg = (devreg_t *) DEV_REG_ADDR(intLineNo, devNo);
+        unsigned int *devBase = DEV_REG_BASE(intLineNo, devNo);
 
         /* Salva il codice di status */
-        unsigned int savedStatus = devReg->d_status;
+        unsigned int savedStatus = DEV_STATUS(devBase);
 
         /* Acknowledge */
-        devReg->d_command = ACK;
+        DEV_COMMAND(devBase) = ACK;
 
         semIdx = DEV_SEM_BASE(intLineNo, devNo);
 
@@ -241,7 +261,6 @@ void interruptHandler(void) {
         if (devSems[semIdx] <= 0) {
             pcb_t *unblocked = removeBlocked(&devSems[semIdx]);
             if (unblocked != NULL) {
-                /* Passa lo status word al processo sbloccato in a0 */
                 unblocked->p_s.reg_a0 = savedStatus;
                 unblocked->p_semAdd   = NULL;
                 insertProcQ(&readyQueue, unblocked);

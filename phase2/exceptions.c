@@ -32,20 +32,26 @@ extern void scheduler(void);
 /* Dichiarazione interrupt handler (definito in interrupts.c) */
 extern void interruptHandler(void);
 
+/*
+ * copyState - copia uno state_t word per word.
+ * Non usiamo l'assegnazione struct perché il compilatore la trasforma
+ * in memcpy che non è disponibile in ambiente freestanding.
+ */
+static void copyState(state_t *dst, state_t *src) {
+    unsigned int *d = (unsigned int *) dst;
+    unsigned int *s = (unsigned int *) src;
+    /* state_t è STATESIZE byte = STATESIZE/4 word */
+    for (int i = 0; i < STATESIZE / WORDLEN; i++) {
+        d[i] = s[i];
+    }
+}
+
 
 /* -----------------------------------------------------------------------
- * uTLB_RefillHandler
- *
- * Handler placeholder per eventi TLB-Refill (Phase 2).
- * Verrà sostituito dal Support Level in Phase 3.
+ * NOTA: uTLB_RefillHandler è definita in p2test.c per Phase 2.
+ * Il suo indirizzo viene comunque registrato nel Pass Up Vector
+ * da initial.c tramite la dichiarazione extern qui sotto.
  * ----------------------------------------------------------------------- */
-void uTLB_RefillHandler(void) {
-    /* Scrive una entry TLB "nulla" e ricarica lo stato salvato */
-    setENTRYHI(0x80000000);
-    setENTRYLO(0x00000000);
-    TLBWR();
-    LDST((state_t *) BIOSDATAPAGE);
-}
 
 
 /* -----------------------------------------------------------------------
@@ -61,10 +67,12 @@ void exceptionHandler(void) {
     state_t *savedState = (state_t *) BIOSDATAPAGE;
 
     unsigned int cause   = savedState->cause;
-    unsigned int excCode = cause & CAUSE_EXCCODE_MASK;
+    /* Estrae il codice eccezione dai bit 6:2 (shift di 2, maschera 0x1F) */
+    unsigned int excCode = (cause & GETEXECCODE) >> CAUSESHIFT;
 
-    /* Dispatch in base al tipo di eccezione */
-    if (CAUSE_IS_INT(cause)) {
+    /* Dispatch in base al tipo di eccezione.
+     * In µRISC-V il bit 31 del registro cause = 1 indica un interrupt */
+    if (cause & 0x80000000) {
         /* Interrupt (device o timer) */
         interruptHandler();
     } else if (excCode == 8 || excCode == 11) {
@@ -207,7 +215,7 @@ static void syscallHandler(state_t *savedState) {
                 savedState->reg_a0 = (unsigned int) -1;
             } else {
                 /* Inizializza il nuovo PCB */
-                child->p_s            = *newState;
+                copyState(&child->p_s, newState);
                 child->p_supportStruct = supportPtr;
                 child->p_time         = 0;
                 child->p_semAdd       = NULL;
@@ -234,7 +242,7 @@ static void syscallHandler(state_t *savedState) {
          * Termina il processo corrente (pid==0) o il processo con PID
          * indicato, insieme a tutti i suoi discendenti.
          * -------------------------------------------------------------- */
-        case TERMINATEPROCESS: {
+        case TERMPROCESS: {
             int targetPid = (int) savedState->reg_a1;
 
             if (targetPid == 0) {
@@ -313,7 +321,7 @@ static void syscallHandler(state_t *savedState) {
             if (*semAddr < 0) {
                 /* Blocca il processo corrente */
                 updateCPUTime();
-                currentProcess->p_s = *savedState;
+                copyState(&currentProcess->p_s, savedState);
                 insertBlocked(semAddr, currentProcess);
                 currentProcess = NULL;
                 scheduler();
@@ -373,7 +381,7 @@ static void syscallHandler(state_t *savedState) {
              *
              * Inversione: dall'indirizzo del command ricaviamo linea e device.
              */
-            int devOffset = (int)commandAddr - DEV_REG_START;
+            int devOffset = (int)commandAddr - START_DEVREG;
             int lineOffset, devNo, semIdx;
 
             /* Ogni linea occupa 8 device * 0x10 = 0x80 byte */
@@ -402,7 +410,7 @@ static void syscallHandler(state_t *savedState) {
 
             /* Aggiorna CPU time e salva stato */
             updateCPUTime();
-            currentProcess->p_s = *savedState;
+            copyState(&currentProcess->p_s, savedState);
 
             /* P sul semaforo del device (sempre bloccante per DOIO) */
             devSems[semIdx]--;
@@ -423,7 +431,7 @@ static void syscallHandler(state_t *savedState) {
          * Ritorna il tempo CPU accumulato dal processo corrente in a0.
          * Include il tempo del quanto corrente (dall'ultimo dispatch).
          * -------------------------------------------------------------- */
-        case GETCPUTIME: {
+        case GETTIME: {
             cpu_t now;
             STCK(now);
             /* p_time + tempo del quanto corrente */
@@ -439,13 +447,13 @@ static void syscallHandler(state_t *savedState) {
          * Esegue P sul semaforo pseudo-clock (sempre bloccante).
          * Il semaforo viene V'ato ogni 100ms dall'Interval Timer.
          * -------------------------------------------------------------- */
-        case WAITCLOCK: {
+        case CLOCKWAIT: {
             /* Incrementa PC prima di bloccarsi */
             savedState->pc_epc += WORDLEN;
 
             /* Aggiorna CPU time e salva stato */
             updateCPUTime();
-            currentProcess->p_s = *savedState;
+            copyState(&currentProcess->p_s, savedState);
 
             /* P sul semaforo pseudo-clock */
             devSems[PSEUDOCLK_SEM]--;
@@ -505,7 +513,7 @@ static void syscallHandler(state_t *savedState) {
 
             /* Aggiorna CPU time e salva stato nel PCB */
             updateCPUTime();
-            currentProcess->p_s = *savedState;
+            copyState(&currentProcess->p_s, savedState);
 
             /* Rimette il processo in coda alla Ready Queue */
             insertProcQ(&readyQueue, currentProcess);
@@ -570,7 +578,7 @@ static void passUpOrDie(int exceptionType) {
 
         /* Copia lo stato salvato nell'eccezione nel campo appropriato
          * della Support Structure */
-        sup->sup_exceptState[exceptionType] = *((state_t *) BIOSDATAPAGE);
+        copyState(&sup->sup_exceptState[exceptionType], (state_t *) BIOSDATAPAGE);
 
         /* Carica il contesto del Support Level handler */
         context_t *ctx = &(sup->sup_exceptContext[exceptionType]);

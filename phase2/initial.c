@@ -46,8 +46,8 @@ int main(void) {
     passupvector_t *passUpVec = (passupvector_t *) PASSUPVECTOR;
 
     /* Handler per eventi TLB-Refill */
-    passUpVec->tlb_refll_handler    = (memaddr) uTLB_RefillHandler;
-    passUpVec->tlb_refll_stackPtr   = KERNELSTACK;
+    passUpVec->tlb_refill_handler    = (memaddr) uTLB_RefillHandler;
+    passUpVec->tlb_refill_stackPtr   = KERNELSTACK;
 
     /* Handler per tutte le altre eccezioni (interrupt inclusi) */
     passUpVec->exception_handler    = (memaddr) exceptionHandler;
@@ -98,7 +98,13 @@ int main(void) {
     /* Kernel mode + interrupt abilitati tramite i campi status e mie */
     testPcb->p_s.status  = MSTATUS_MPIE_MASK | MSTATUS_MPP_M;
     testPcb->p_s.mie     = MIE_ALL;
-    testPcb->p_s.reg_sp  = RAMTOP;                   /* stack in cima alla RAM */
+    /* Calcola RAMTOP a runtime: indirizzo di fine RAM
+     * In µRISC-V: RAMTOP = RAMBASE + RAMSIZE * PAGESIZE
+     * I valori si leggono dalle costanti del BIOS */
+    memaddr ramtop;
+    RAMTOP(ramtop);
+
+    testPcb->p_s.reg_sp  = ramtop;                        /* stack in cima alla RAM */
     testPcb->p_s.pc_epc  = (memaddr) test;           /* PC punta alla funzione test */
 
     /* Campi PCB */
