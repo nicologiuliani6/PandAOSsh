@@ -3,7 +3,16 @@
 static struct list_head pcbFree_h;
 static pcb_t pcbFree_table[MAXPROC];
 static int next_pid = 1;
-
+static void debug_print4(const char *msg) {
+    unsigned int *command = (unsigned int *)(0x10000254 + 3*4);
+    
+    while (*msg != '\0') {
+        *command = 2 | (((unsigned int)*msg) << 8);
+        /* delay */
+        for (volatile int i = 0; i < 10000; i++);
+        msg++;
+    }
+}
 /* Initialize "pcbFree_h" and add elements of "pcbFree_table" to the list "pcbFree_h"*/
 void initPcbs() {
     int i;
@@ -74,15 +83,17 @@ pcb_t* headProcQ(struct list_head* head) {
 
 /* Remove and return the first PCB in the list "head" */
 pcb_t* removeProcQ(struct list_head* head) {
+    debug_print4("\nentrato in removeProcQ");
     struct list_head* first;
     pcb_t* p;
     if (list_empty(head)) return NULL;
     first = head->next;
     list_del(first);
+    INIT_LIST_HEAD(first);   // <-- aggiungere questo
     p = container_of(first, pcb_t, p_list);
+    debug_print4("\nesco da removeProcQ\n");
     return p;
-}
-
+}   
 /* Remove PCB "p" from the list "head" */
 pcb_t* outProcQ(struct list_head* head, pcb_t* p) {
     struct list_head* pos;
