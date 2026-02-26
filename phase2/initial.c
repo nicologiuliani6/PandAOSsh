@@ -34,11 +34,22 @@ pcb_t           *currentProcess;
 int              devSems[TOT_SEMS];
 cpu_t            startTOD;
 
+
+static void debug_print(const char *msg) {
+    unsigned int *command = (unsigned int *)(0x10000254 + 3*4);
+    
+    while (*msg != '\0') {
+        *command = 2 | (((unsigned int)*msg) << 8);
+        /* delay */
+        for (volatile int i = 0; i < 10000; i++);
+        msg++;
+    }
+}
 /* -----------------------------------------------------------------------
  * main() - inizializzazione del Nucleo
  * ----------------------------------------------------------------------- */
 int main(void) {
-
+    debug_print("1");
     /* ------------------------------------------------------------------
      * 1. Popola il Pass Up Vector del processore 0
      *    Il Pass Up Vector del processore 0 si trova a 0x0FFF.F900
@@ -52,13 +63,13 @@ int main(void) {
     /* Handler per tutte le altre eccezioni (interrupt inclusi) */
     passUpVec->exception_handler    = (memaddr) exceptionHandler;
     passUpVec->exception_stackPtr   = KERNELSTACK;
-
+    debug_print("2");
     /* ------------------------------------------------------------------
      * 2. Inizializza le strutture dati di livello 2 (Phase 1)
      * ------------------------------------------------------------------ */
     initPcbs();
     initASL();
-
+    debug_print("3");
     /* ------------------------------------------------------------------
      * 3. Inizializza le variabili globali di livello 3
      * ------------------------------------------------------------------ */
@@ -74,13 +85,13 @@ int main(void) {
     }
 
     startTOD = 0;
-
+    debug_print("4");
     /* ------------------------------------------------------------------
      * 4. Carica l'Interval Timer con 100ms (PSECOND)
      *    Genera i Pseudo-clock tick ogni 100ms
      * ------------------------------------------------------------------ */
     LDIT(PSECOND);
-
+    debug_print("5");
     /* ------------------------------------------------------------------
      * 5. Istanzia il processo di test
      *    - Alloca un PCB
@@ -93,7 +104,6 @@ int main(void) {
         /* Non dovrebbe mai accadere: nessun PCB disponibile */
         PANIC();
     }
-
     /* Inizializza lo stato del processore per il processo test */
     /* Kernel mode + interrupt abilitati tramite i campi status e mie */
     testPcb->p_s.status  = MSTATUS_MPIE_MASK | MSTATUS_MPP_M;
@@ -117,13 +127,14 @@ int main(void) {
     /* Inserisce nella Ready Queue come figlio "radice" (no parent) */
     insertProcQ(&readyQueue, testPcb);
     processCount++;
-
+    debug_print("6");
     /* ------------------------------------------------------------------
      * 6. Chiama lo Scheduler - da qui non si ritorna mai
      * ------------------------------------------------------------------ */
     extern void scheduler();
     scheduler();
 
-    /* Non si dovrebbe mai arrivare qui */
+    /* Non si dovrebbe mai arrivare qui */  
+    debug_print("fine main");
     return 0;
 }
