@@ -98,4 +98,4 @@ Genera `build/MultiPandOS.core.uriscv`. Aprire **µRISC-V**, caricare **config_m
 Il test ha successo se sul terminale compare il messaggio finale:
 ```
 System halted
-```
+```cd

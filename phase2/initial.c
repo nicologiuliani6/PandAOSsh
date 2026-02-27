@@ -35,16 +35,7 @@ int              devSems[TOT_SEMS];
 cpu_t            startTOD;
 
 
-static void debug_print(const char *msg) {
-    unsigned int *command = (unsigned int *)(0x10000254 + 3*4);
-    
-    while (*msg != '\0') {
-        *command = 2 | (((unsigned int)*msg) << 8);
-        /* delay */
-        for (volatile int i = 0; i < 10000; i++);
-        msg++;
-    }
-}
+#include "debug.c"
 /* -----------------------------------------------------------------------
  * main() - inizializzazione del Nucleo
  * ----------------------------------------------------------------------- */
