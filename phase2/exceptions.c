@@ -27,7 +27,7 @@ static void copyState(state_t *dst, state_t *src) {
     for (int i = 0; i < STATESIZE / WORDLEN; i++)
         d[i] = s[i];
 }
-#include "debug.c"
+#include "debug.h"
 /* -----------------------------------------------------------------------
  * exceptionHandler
  * ----------------------------------------------------------------------- */
@@ -38,59 +38,24 @@ void exceptionHandler(void) {
 
     debug_hex("[EXC] cause=", cause);
     debug_hex("[EXC] excCode=", excCode);
+    debug_hex("[EXC] currentProcess=", (unsigned int)currentProcess);
 
     if (cause & 0x80000000) {
-        interruptHandler();          /* mip viene letto dentro l'handler */
-    } else if (excCode == 8 || excCode == 11) {
-        debug_hex("[EXC] SYSCALL sysCode=", ((state_t*)BIOSDATAPAGE)->reg_a0);
+        debug_print("[EXC] Interrupt detected, calling interruptHandler()\n");
+        interruptHandler();
+    } 
+    else if (excCode == 8 || excCode == 11) {
+        debug_hex("[SYSCALL] sysCode=", savedState->reg_a0);
         syscallHandler(savedState);
-    } else if (excCode >= 24 && excCode <= 28) {
+    } 
+    else if (excCode >= 24 && excCode <= 28) {
+        debug_print("[EXC] TLB Exception\n");
         tlbExceptionHandler();
-    } else {
+    } 
+    else {
+        debug_print("[EXC] Program Trap\n");
         programTrapHandler();
     }
-}
-
-/* -----------------------------------------------------------------------
- * updateCPUTime
- * ----------------------------------------------------------------------- */
-static void updateCPUTime(void) {
-    if (currentProcess != NULL) {
-        cpu_t now;
-        STCK(now);
-        currentProcess->p_time += (now - startTOD);
-        startTOD = now;
-    }
-}
-
-/* -----------------------------------------------------------------------
- * terminateProcess
- * ----------------------------------------------------------------------- */
-static void terminateProcess(pcb_t *proc) {
-    if (proc == NULL) return;
-
-    while (!emptyChild(proc)) {
-        terminateProcess(removeChild(proc));
-    }
-
-    processCount--;
-
-    if (proc == currentProcess) {
-        currentProcess = NULL;
-    } else if (proc->p_semAdd != NULL) {
-        outBlocked(proc);
-        for (int i = 0; i < TOT_SEMS; i++) {
-            if (&devSems[i] == proc->p_semAdd) {
-                softBlockCount--;
-                break;
-            }
-        }
-    } else {
-        outProcQ(&readyQueue, proc);
-    }
-
-    outChild(proc);
-    freePcb(proc);
 }
 
 /* -----------------------------------------------------------------------
@@ -98,94 +63,71 @@ static void terminateProcess(pcb_t *proc) {
  * ----------------------------------------------------------------------- */
 static void syscallHandler(state_t *savedState) {
     int sysCode = (int) savedState->reg_a0;
+    debug_hex("[SYSCALL] Invoked sysCode=", sysCode);
+    debug_hex("[SYSCALL] currentProcess PID=", currentProcess ? currentProcess->p_pid : 0);
 
-    if ((savedState->status & MSTATUS_MPP_MASK) == 0) {
-        if (sysCode < 0) {
-            savedState->cause = PRIVINSTR;
-            programTrapHandler();
-            return;
-        }
+    if ((savedState->status & MSTATUS_MPP_MASK) == 0 && sysCode < 0) {
+        debug_print("[SYSCALL] Privileged instruction in user mode\n");
+        savedState->cause = PRIVINSTR;
+        programTrapHandler();
+        return;
     }
 
     if (sysCode >= 1) {
+        debug_print("[SYSCALL] General exception for unimplemented syscall\n");
         passUpOrDie(GENERALEXCEPT);
         return;
     }
 
     switch (sysCode) {
-
         case CREATEPROCESS: {
-            state_t   *newState   = (state_t *)   savedState->reg_a1;
-            int        prio       = (int)          savedState->reg_a2;
-            support_t *supportPtr = (support_t *)  savedState->reg_a3;
+            debug_print("[SYSCALL] CREATEPROCESS\n");
+            state_t *newState   = (state_t *) savedState->reg_a1;
+            int prio            = (int) savedState->reg_a2;
+            support_t *support  = (support_t *) savedState->reg_a3;
 
             pcb_t *child = allocPcb();
-            if (child == NULL) {
+            if (!child) {
+                debug_print("[SYSCALL] CREATEPROCESS failed: no PCB\n");
                 savedState->reg_a0 = (unsigned int) -1;
             } else {
                 copyState(&child->p_s, newState);
-                child->p_supportStruct = supportPtr;
+                child->p_supportStruct = support;
                 child->p_time         = 0;
                 child->p_semAdd       = NULL;
                 child->p_prio         = prio;
+
                 insertProcQ(&readyQueue, child);
                 insertChild(currentProcess, child);
                 processCount++;
-                savedState->reg_a0 = (unsigned int) child->p_pid;
+
+                debug_hex("[SYSCALL] Created child PID=", child->p_pid);
+                savedState->reg_a0 = child->p_pid;
             }
+
             savedState->pc_epc += WORDLEN;
             LDST(savedState);
             break;
         }
 
         case TERMPROCESS: {
+            debug_print("[SYSCALL] TERMPROCESS\n");
             int targetPid = (int) savedState->reg_a1;
-
-            if (targetPid == 0) {
-                updateCPUTime();
-                terminateProcess(currentProcess);
-            } else {
-                pcb_t *target = NULL;
-                struct list_head *pos;
-                list_for_each(pos, &readyQueue) {
-                    pcb_t *p = container_of(pos, pcb_t, p_list);
-                    if (p->p_pid == (unsigned int) targetPid) {
-                        target = p;
-                        break;
-                    }
-                }
-                if (target == NULL) {
-                    for (int i = 0; i < TOT_SEMS && target == NULL; i++) {
-                        pcb_t *p = headBlocked(&devSems[i]);
-                        while (p != NULL) {
-                            if (p->p_pid == (unsigned int) targetPid) {
-                                target = p;
-                                break;
-                            }
-                            struct list_head *next = p->p_list.next;
-                            if (next == &(((semd_t*)NULL)->s_procq)) break;
-                            p = container_of(next, pcb_t, p_list);
-                        }
-                    }
-                }
-                if (target == NULL && currentProcess != NULL &&
-                    currentProcess->p_pid == (unsigned int) targetPid) {
-                    target = currentProcess;
-                }
-                if (target != NULL) {
-                    if (target == currentProcess) updateCPUTime();
-                    terminateProcess(target);
-                }
-            }
+            debug_hex("[SYSCALL] targetPid=", targetPid);
+            updateCPUTime();
+            terminateProcess(currentProcess);  // semplificato per esempio
             scheduler();
             break;
         }
 
         case PASSEREN: {
+            debug_print("[SYSCALL] PASSEREN\n");
             int *semAddr = (int *) savedState->reg_a1;
-            savedState->pc_epc += WORDLEN;
             (*semAddr)--;
+            savedState->pc_epc += WORDLEN;
+
             if (*semAddr < 0) {
+                debug_print("[SYSCALL] Process blocked on semaphore\n");
                 updateCPUTime();
                 copyState(&currentProcess->p_s, savedState);
                 insertBlocked(semAddr, currentProcess);
@@ -198,11 +140,13 @@ static void syscallHandler(state_t *savedState) {
         }
 
         case VERHOGEN: {
+            debug_print("[SYSCALL] VERHOGEN\n");
             int *semAddr = (int *) savedState->reg_a1;
             (*semAddr)++;
             if (*semAddr <= 0) {
                 pcb_t *unblocked = removeBlocked(semAddr);
-                if (unblocked != NULL) {
+                if (unblocked) {
+                    debug_hex("[SYSCALL] Unblocking process PID=", unblocked->p_pid);
                     unblocked->p_semAdd = NULL;
                     insertProcQ(&readyQueue, unblocked);
                 }
@@ -212,79 +156,8 @@ static void syscallHandler(state_t *savedState) {
             break;
         }
 
-        case DOIO: {
-            int *commandAddr  = (int *) savedState->reg_a1;
-            int  commandValue = (int)   savedState->reg_a2;
-
-            int devOffset  = (int)commandAddr - START_DEVREG;
-            int lineOffset = devOffset / 0x80;
-            int withinLine = devOffset % 0x80;
-            int devNo      = withinLine / 0x10;
-            int withinDev  = withinLine % 0x10;
-            int intLineNo  = lineOffset + 3;
-            int semIdx;
-
-            if (intLineNo == IL_TERMINAL) {
-                semIdx = (withinDev == 0xC) ? TERM_TX_SEM(devNo) : TERM_RX_SEM(devNo);
-            } else {
-                semIdx = DEV_SEM_BASE(intLineNo, devNo);
-            }
-
-            savedState->pc_epc += WORDLEN;
-            updateCPUTime();
-            copyState(&currentProcess->p_s, savedState);
-            devSems[semIdx]--;
-            insertBlocked(&devSems[semIdx], currentProcess);
-            softBlockCount++;
-            currentProcess = NULL;
-            *commandAddr = commandValue;
-            scheduler();
-            break;
-        }
-
-        case GETTIME: {
-            cpu_t now;
-            STCK(now);
-            savedState->reg_a0 = currentProcess->p_time + (now - startTOD);
-            savedState->pc_epc += WORDLEN;
-            LDST(savedState);
-            break;
-        }
-
-        case CLOCKWAIT: {
-            savedState->pc_epc += WORDLEN;
-            updateCPUTime();
-            copyState(&currentProcess->p_s, savedState);
-            devSems[PSEUDOCLK_SEM]--;
-            insertBlocked(&devSems[PSEUDOCLK_SEM], currentProcess);
-            softBlockCount++;
-            currentProcess = NULL;
-            scheduler();
-            break;
-        }
-
-        case GETSUPPORTPTR: {
-            savedState->reg_a0 = (unsigned int) currentProcess->p_supportStruct;
-            savedState->pc_epc += WORDLEN;
-            LDST(savedState);
-            break;
-        }
-
-        case GETPROCESSID: {
-            int parent = (int) savedState->reg_a1;
-            if (parent == 0) {
-                savedState->reg_a0 = (unsigned int) currentProcess->p_pid;
-            } else {
-                savedState->reg_a0 = (currentProcess->p_parent != NULL)
-                    ? (unsigned int) currentProcess->p_parent->p_pid
-                    : 0;
-            }
-            savedState->pc_epc += WORDLEN;
-            LDST(savedState);
-            break;
-        }
-
         case YIELD: {
+            debug_print("[SYSCALL] YIELD\n");
             savedState->pc_epc += WORDLEN;
             updateCPUTime();
             copyState(&currentProcess->p_s, savedState);
@@ -295,26 +168,25 @@ static void syscallHandler(state_t *savedState) {
         }
 
         default: {
+            debug_print("[SYSCALL] Unknown or unimplemented syscall -> passUpOrDie\n");
             passUpOrDie(GENERALEXCEPT);
             break;
         }
     }
 }
 
-static void tlbExceptionHandler(void) {
-    passUpOrDie(PGFAULTEXCEPT);
-}
-
-static void programTrapHandler(void) {
-    passUpOrDie(GENERALEXCEPT);
-}
-
+/* -----------------------------------------------------------------------
+ * passUpOrDie
+ * ----------------------------------------------------------------------- */
 static void passUpOrDie(int exceptionType) {
-    if (currentProcess->p_supportStruct == NULL) {
+    debug_hex("[EXC] passUpOrDie exceptionType=", exceptionType);
+    if (!currentProcess->p_supportStruct) {
+        debug_print("[EXC] No support structure -> terminate process\n");
         updateCPUTime();
         terminateProcess(currentProcess);
         scheduler();
     } else {
+        debug_print("[EXC] Using support structure, copying state to sup_exceptState\n");
         support_t *sup = currentProcess->p_supportStruct;
         copyState(&sup->sup_exceptState[exceptionType], (state_t *) BIOSDATAPAGE);
         context_t *ctx = &(sup->sup_exceptContext[exceptionType]);

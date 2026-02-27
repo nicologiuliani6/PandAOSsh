@@ -8,7 +8,7 @@
 
 extern void scheduler(void);
 
-#include "debug.c"
+#include "debug.h"
 
 static void copyState(state_t *dst, state_t *src) {
     unsigned int *d = (unsigned int *) dst;
@@ -41,159 +41,247 @@ static int getHighestPriorityDevice(unsigned int bitmap) {
 }
 
 void interruptHandler(void) {
+
     state_t     *savedState = (state_t *) BIOSDATAPAGE;
     unsigned int mip        = getMIP();
 
-    debug_print("interruptHandler: ");
-    debug_hex("mip=", mip);
+    debug_print("\n[INT] ===== Interrupt received =====\n");
+    debug_hex("[INT] MIP=", mip);
 
-    /* ------------------------------------------------------------------ */
-    /* PLT (processor local timer / timeslice)                             */
-    /* ------------------------------------------------------------------ */
+    /* ================================================================ */
+    /* PLT - Processor Local Timer (timeslice)                         */
+    /* ================================================================ */
     if (mip & MIP_BIT(IL_CPUTIMER)) {
-        debug_hex("TIMESLICE=",     (unsigned int)TIMESLICE);
-        debug_hex("TIMESCALE=",     (unsigned int)(*((cpu_t *)TIMESCALEADDR)));
-        debug_hex("timer value=",   (unsigned int)(TIMESLICE * (*((cpu_t *)TIMESCALEADDR))));
-        debug_print("-> PLT (timeslice expired)\n");
-        debug_hex("PLT savedState->pc_epc=", savedState->pc_epc);
-        debug_hex("PLT savedState->status=", savedState->status);
-        debug_hex("PLT savedState->reg_sp=", savedState->reg_sp);
-        debug_hex("PLT currentProcess=",     (unsigned int)currentProcess);
+
+        debug_print("[PLT] Timeslice expired\n");
+
+        debug_hex("[PLT] currentProcess=", (unsigned int)currentProcess);
+        debug_hex("[PLT] pc_epc=", savedState->pc_epc);
+        debug_hex("[PLT] status=", savedState->status);
 
         setTIMER(TIMESLICE * (*((cpu_t *)TIMESCALEADDR)));
 
         if (currentProcess != NULL) {
+
             cpu_t now;
             STCK(now);
+
+            debug_hex("[PLT] startTOD=", startTOD);
+            debug_hex("[PLT] now=", now);
+
             currentProcess->p_time += (now - startTOD);
+
             copyState(&currentProcess->p_s, savedState);
+
+            debug_print("[PLT] Reinserting process in ReadyQueue\n");
+
             insertProcQ(&readyQueue, currentProcess);
             currentProcess = NULL;
         }
+
+        debug_print("[PLT] Calling scheduler\n");
         scheduler();
         return;
     }
 
-    /* ------------------------------------------------------------------ */
-    /* Interval Timer (pseudo-clock tick ogni 100ms)                       */
-    /* ------------------------------------------------------------------ */
+    /* ================================================================ */
+    /* Interval Timer - Pseudo Clock                                    */
+    /* ================================================================ */
     if (mip & MIP_BIT(IL_TIMER)) {
-        debug_print("-> Interval Timer (pseudo-clock)\n");
+
+        debug_print("[IT] Pseudo-clock tick (100ms)\n");
+
         LDIT(PSECOND);
 
         pcb_t *unblocked;
+        int count = 0;
+
         while ((unblocked = removeBlocked(&devSems[PSEUDOCLK_SEM])) != NULL) {
+
+            debug_print("[IT] Unblocking process from pseudo-clock\n");
+
             unblocked->p_semAdd   = NULL;
             unblocked->p_s.reg_a0 = 0;
+
             insertProcQ(&readyQueue, unblocked);
             softBlockCount--;
+            count++;
         }
+
+        debug_hex("[IT] Processes unblocked=", count);
+
         devSems[PSEUDOCLK_SEM] = 0;
 
         if (currentProcess != NULL) {
-            debug_print("IT: returning to currentProcess\n");
+            debug_print("[IT] Returning to currentProcess\n");
             LDST(savedState);
         } else {
-            debug_print("IT: calling scheduler\n");
+            debug_print("[IT] No running process -> scheduler\n");
             scheduler();
         }
+
         return;
     }
 
-    /* ------------------------------------------------------------------ */
-    /* Device interrupt                                                     */
-    /* ------------------------------------------------------------------ */
-    debug_print("-> device interrupt\n");
+    /* ================================================================ */
+    /* Device Interrupt                                                  */
+    /* ================================================================ */
+
+    debug_print("[DEV] Device interrupt detected\n");
 
     int intLineNo = -1;
     int devNo     = -1;
     int semIdx    = -1;
 
     for (int line = IL_DISK; line <= IL_TERMINAL; line++) {
+
         if (mip & MIP_BIT(line)) {
+
             unsigned int bitmap = INT_BITMAP(line);
+
             if (bitmap != 0) {
+
                 intLineNo = line;
-                devNo = getHighestPriorityDevice(bitmap);
-                debug_hex("device line=", (unsigned int)intLineNo);
-                debug_hex("device devNo=", (unsigned int)devNo);
+                devNo     = getHighestPriorityDevice(bitmap);
+
+                debug_hex("[DEV] Line=", intLineNo);
+                debug_hex("[DEV] Device=", devNo);
+
                 break;
             }
         }
     }
 
     if (intLineNo == -1 || devNo == -1) {
-        debug_print("no device interrupt found, returning\n");
+
+        debug_print("[DEV] Spurious interrupt (no device found)\n");
+
         if (currentProcess != NULL) LDST(savedState);
         else scheduler();
+
         return;
     }
 
-    if (intLineNo == IL_TERMINAL) {
-        unsigned int *termBase = DEV_REG_BASE(intLineNo, devNo);
-        unsigned int  txStatus = TERM_TRANSM_STATUS(termBase) & 0xFF;
-        unsigned int  rxStatus = TERM_RECV_STATUS(termBase)   & 0xFF;
+    /* ================= Terminal ================= */
 
-        debug_hex("terminal txStatus=", txStatus);
-        debug_hex("terminal rxStatus=", rxStatus);
+    if (intLineNo == IL_TERMINAL) {
+
+        unsigned int *termBase = DEV_REG_BASE(intLineNo, devNo);
+
+        unsigned int txStatus = TERM_TRANSM_STATUS(termBase) & 0xFF;
+        unsigned int rxStatus = TERM_RECV_STATUS(termBase)   & 0xFF;
+
+        debug_hex("[TERM] TX status=", txStatus);
+        debug_hex("[TERM] RX status=", rxStatus);
 
         if (txStatus != READY && txStatus != BUSY) {
-            debug_print("terminal TX interrupt\n");
+
+            debug_print("[TERM] TX completed\n");
+
             unsigned int savedStatus = TERM_TRANSM_STATUS(termBase);
             TERM_TRANSM_COMMAND(termBase) = ACK;
+
             semIdx = TERM_TX_SEM(devNo);
+
+            debug_hex("[TERM] semIdx=", semIdx);
+
             devSems[semIdx]++;
+
             if (devSems[semIdx] <= 0) {
+
                 pcb_t *unblocked = removeBlocked(&devSems[semIdx]);
+
                 if (unblocked != NULL) {
+
+                    debug_print("[TERM] Unblocking TX process\n");
+
                     unblocked->p_s.reg_a0 = savedStatus;
                     unblocked->p_semAdd   = NULL;
+
                     insertProcQ(&readyQueue, unblocked);
                     softBlockCount--;
                 }
             }
+
         } else if (rxStatus != READY && rxStatus != BUSY) {
-            debug_print("terminal RX interrupt\n");
+
+            debug_print("[TERM] RX completed\n");
+
             unsigned int savedStatus = TERM_RECV_STATUS(termBase);
             TERM_RECV_COMMAND(termBase) = ACK;
+
             semIdx = TERM_RX_SEM(devNo);
+
+            debug_hex("[TERM] semIdx=", semIdx);
+
             devSems[semIdx]++;
+
             if (devSems[semIdx] <= 0) {
+
                 pcb_t *unblocked = removeBlocked(&devSems[semIdx]);
+
                 if (unblocked != NULL) {
+
+                    debug_print("[TERM] Unblocking RX process\n");
+
                     unblocked->p_s.reg_a0 = savedStatus;
                     unblocked->p_semAdd   = NULL;
+
                     insertProcQ(&readyQueue, unblocked);
                     softBlockCount--;
                 }
             }
+
         } else {
-            debug_print("terminal: no pending TX or RX\n");
+
+            debug_print("[TERM] No valid TX/RX cause\n");
         }
 
-    } else {
+    }
+    /* ================= Other devices ================= */
+
+    else {
+
         unsigned int *devBase     = DEV_REG_BASE(intLineNo, devNo);
         unsigned int  savedStatus = DEV_STATUS(devBase);
-        debug_hex("device status=", savedStatus);
+
+        debug_hex("[DEV] Status=", savedStatus);
+
         DEV_COMMAND(devBase) = ACK;
+
         semIdx = DEV_SEM_BASE(intLineNo, devNo);
+
+        debug_hex("[DEV] semIdx=", semIdx);
+
         devSems[semIdx]++;
+
         if (devSems[semIdx] <= 0) {
+
             pcb_t *unblocked = removeBlocked(&devSems[semIdx]);
+
             if (unblocked != NULL) {
+
+                debug_print("[DEV] Unblocking process\n");
+
                 unblocked->p_s.reg_a0 = savedStatus;
                 unblocked->p_semAdd   = NULL;
+
                 insertProcQ(&readyQueue, unblocked);
                 softBlockCount--;
             }
         }
     }
 
+    /* ================================================================ */
+
     if (currentProcess != NULL) {
-        debug_print("device: returning to currentProcess\n");
+
+        debug_print("[INT] Returning to running process\n");
         LDST(savedState);
+
     } else {
-        debug_print("device: calling scheduler\n");
+
+        debug_print("[INT] No running process -> scheduler\n");
         scheduler();
     }
 }

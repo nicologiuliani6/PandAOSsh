@@ -138,7 +138,7 @@ void uTLB_RefillHandler() {
     LDST((state_t*) BIOSDATAPAGE);
 }
 
-#include "debug.c"
+#include "debug.h"
 /*********************************************************************/
 /*                                                                   */
 /*                 p1 -- the root process                            */

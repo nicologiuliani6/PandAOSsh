@@ -35,97 +35,114 @@ int              devSems[TOT_SEMS];
 cpu_t            startTOD;
 
 
-#include "debug.c"
+#include "debug.h"
 /* -----------------------------------------------------------------------
  * main() - inizializzazione del Nucleo
  * ----------------------------------------------------------------------- */
 int main(void) {
-    debug_print("1");
+
+    debug_print("\n[BOOT] === Kernel main start ===\n");
+
     /* ------------------------------------------------------------------
-     * 1. Popola il Pass Up Vector del processore 0
-     *    Il Pass Up Vector del processore 0 si trova a 0x0FFF.F900
+     * 1. Popola il Pass Up Vector
      * ------------------------------------------------------------------ */
+    debug_print("[INIT] Setting PassUpVector...\n");
+
     passupvector_t *passUpVec = (passupvector_t *) PASSUPVECTOR;
 
-    /* Handler per eventi TLB-Refill */
-    passUpVec->tlb_refill_handler    = (memaddr) uTLB_RefillHandler;
-    passUpVec->tlb_refill_stackPtr   = KERNELSTACK;
+    passUpVec->tlb_refill_handler  = (memaddr) uTLB_RefillHandler;
+    passUpVec->tlb_refill_stackPtr = KERNELSTACK;
 
-    /* Handler per tutte le altre eccezioni (interrupt inclusi) */
-    passUpVec->exception_handler    = (memaddr) exceptionHandler;
-    passUpVec->exception_stackPtr   = KERNELSTACK;
-    debug_print("2");
+    passUpVec->exception_handler   = (memaddr) exceptionHandler;
+    passUpVec->exception_stackPtr  = KERNELSTACK;
+
+    debug_print("[OK] PassUpVector configured.\n");
+
+
     /* ------------------------------------------------------------------
-     * 2. Inizializza le strutture dati di livello 2 (Phase 1)
+     * 2. Inizializza Phase 1
      * ------------------------------------------------------------------ */
+    debug_print("[INIT] Initializing PCB and ASL...\n");
+
     initPcbs();
     initASL();
-    debug_print("3");
+
+    debug_print("[OK] Phase 1 structures initialized.\n");
+
+
     /* ------------------------------------------------------------------
-     * 3. Inizializza le variabili globali di livello 3
+     * 3. Inizializza variabili globali
      * ------------------------------------------------------------------ */
+    debug_print("[INIT] Initializing global variables...\n");
+
     processCount   = 0;
     softBlockCount = 0;
     currentProcess = NULL;
     mkEmptyProcQ(&readyQueue);
 
-    /* Tutti i semafori device/pseudo-clock inizializzati a 0
-     * (semafori di sincronizzazione, non di mutua esclusione) */
     for (int i = 0; i < TOT_SEMS; i++) {
         devSems[i] = 0;
     }
 
     startTOD = 0;
-    debug_print("4");
+
+    debug_print("[OK] Global variables initialized.\n");
+
+
     /* ------------------------------------------------------------------
-     * 4. Carica l'Interval Timer con 100ms (PSECOND)
-     *    Genera i Pseudo-clock tick ogni 100ms
+     * 4. Carica Interval Timer
      * ------------------------------------------------------------------ */
+    debug_print("[INIT] Loading Interval Timer (100ms)...\n");
+
     LDIT(PSECOND);
-    debug_print("5");
+
+    debug_print("[OK] Interval Timer loaded.\n");
+
+
     /* ------------------------------------------------------------------
-     * 5. Istanzia il processo di test
-     *    - Alloca un PCB
-     *    - Stato iniziale: kernel-mode, interrupt abilitati,
-     *      SP = RAMTOP (ultimo frame RAM), PC = test
-     *    - Inserisce nella Ready Queue, incrementa processCount
+     * 5. Crea processo di test
      * ------------------------------------------------------------------ */
+    debug_print("[INIT] Allocating test process PCB...\n");
+
     pcb_t *testPcb = allocPcb();
     if (testPcb == NULL) {
-        /* Non dovrebbe mai accadere: nessun PCB disponibile */
+        debug_print("[PANIC] No PCB available!\n");
         PANIC();
     }
-    /* Inizializza lo stato del processore per il processo test */
-    /* Kernel mode + interrupt abilitati tramite i campi status e mie */
+
+    debug_print("[OK] PCB allocated.\n");
+
     testPcb->p_s.status  = MSTATUS_MPIE_MASK | MSTATUS_MPP_M;
     testPcb->p_s.mie     = MIE_ALL;
-    /* Calcola RAMTOP a runtime: indirizzo di fine RAM
-     * In µRISC-V: RAMTOP = RAMBASE + RAMSIZE * PAGESIZE
-     * I valori si leggono dalle costanti del BIOS */
+
     memaddr ramtop;
     RAMTOP(ramtop);
 
-    testPcb->p_s.reg_sp  = ramtop;                        /* stack in cima alla RAM */
-    testPcb->p_s.pc_epc  = (memaddr) test;           /* PC punta alla funzione test */
+    testPcb->p_s.reg_sp = ramtop;
+    testPcb->p_s.pc_epc = (memaddr) test;
 
-    /* Campi PCB */
-    testPcb->p_parent       = NULL;
-    testPcb->p_semAdd       = NULL;
+    testPcb->p_parent        = NULL;
+    testPcb->p_semAdd        = NULL;
     testPcb->p_supportStruct = NULL;
-    testPcb->p_time         = 0;
-    testPcb->p_prio         = PROCESS_PRIO_LOW;      /* priorità di default */
+    testPcb->p_time          = 0;
+    testPcb->p_prio          = PROCESS_PRIO_LOW;
 
-    /* Inserisce nella Ready Queue come figlio "radice" (no parent) */
     insertProcQ(&readyQueue, testPcb);
     processCount++;
-    debug_print("6");
+
+    debug_print("[OK] Test process inserted in ReadyQueue.\n");
+    debug_print("[INFO] processCount = 1\n");
+
+
     /* ------------------------------------------------------------------
-     * 6. Chiama lo Scheduler - da qui non si ritorna mai
+     * 6. Avvia scheduler
      * ------------------------------------------------------------------ */
+    debug_print("[SCHED] Entering scheduler...\n");
+
     extern void scheduler();
     scheduler();
 
-    /* Non si dovrebbe mai arrivare qui */  
-    debug_print("fine main");
+    debug_print("[ERROR] Returned from scheduler! (Should never happen)\n");
+
     return 0;
 }

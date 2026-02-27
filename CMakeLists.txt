@@ -50,6 +50,7 @@ add_custom_target(phase1
 # -----------------------------------------------------------------------
 add_executable(MultiPandOS_phase2 EXCLUDE_FROM_ALL
     ./klog.c
+    ./debug.c              # <-- aggiunt
     phase1/pcb.c
     phase1/asl.c
     phase2/initial.c
