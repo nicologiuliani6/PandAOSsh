@@ -27,6 +27,49 @@ static void copyState(state_t *dst, state_t *src) {
     for (int i = 0; i < STATESIZE / WORDLEN; i++)
         d[i] = s[i];
 }
+/* Add these implementations to exceptions.c, before exceptionHandler() */
+
+static void updateCPUTime(void) {
+    if (currentProcess) {
+        cpu_t now;
+        STCK(now);
+        currentProcess->p_time += now - startTOD;
+        STCK(startTOD);
+    }
+}
+
+static void terminateProcess(pcb_t *proc) {
+    if (!proc) return;
+
+    /* Recursively terminate all children */
+    pcb_t *child;
+    while ((child = removeChild(proc)) != NULL)
+        terminateProcess(child);
+
+    /* If blocked on a semaphore, remove from ASL */
+    if (proc->p_semAdd != NULL) {
+        outBlocked(proc);
+        /* If it's a device semaphore, don't decrement softBlockCount here
+           — adjust logic based on your semaphore convention */
+        softBlockCount--;
+    } else {
+        /* Remove from ready queue if it's there and not currentProcess */
+        outProcQ(&readyQueue, proc);
+    }
+
+    /* Detach from parent */
+    outChild(proc);
+    freePcb(proc);
+    processCount--;
+}
+
+static void tlbExceptionHandler(void) {
+    passUpOrDie(PGFAULTEXCEPT);
+}
+
+static void programTrapHandler(void) {
+    passUpOrDie(GENERALEXCEPT);
+}
 #include "debug.h"
 /* -----------------------------------------------------------------------
  * exceptionHandler

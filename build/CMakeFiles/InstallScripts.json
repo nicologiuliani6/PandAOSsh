@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/nico/PandAOSsh/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

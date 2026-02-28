@@ -6,6 +6,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/MultiPandOS_phase2.dir/phase1/asl.c.o.d"
   "CMakeFiles/MultiPandOS_phase2.dir/phase1/pcb.c.o"
   "CMakeFiles/MultiPandOS_phase2.dir/phase1/pcb.c.o.d"
+  "CMakeFiles/MultiPandOS_phase2.dir/phase2/debug.c.o"
+  "CMakeFiles/MultiPandOS_phase2.dir/phase2/debug.c.o.d"
   "CMakeFiles/MultiPandOS_phase2.dir/phase2/exceptions.c.o"
   "CMakeFiles/MultiPandOS_phase2.dir/phase2/exceptions.c.o.d"
   "CMakeFiles/MultiPandOS_phase2.dir/phase2/initial.c.o"

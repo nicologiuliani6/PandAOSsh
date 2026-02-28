@@ -1,6 +1,6 @@
-/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles/MultiPandOS_phase1.dir
-/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles/phase1.dir
-/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles/MultiPandOS_phase2.dir
-/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles/phase2.dir
-/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles/edit_cache.dir
-/home/gaia/Documents/uni/sistemi /progetto/PandAOSsh/build/CMakeFiles/rebuild_cache.dir
+/home/nico/PandAOSsh/build/CMakeFiles/MultiPandOS_phase1.dir
+/home/nico/PandAOSsh/build/CMakeFiles/phase1.dir
+/home/nico/PandAOSsh/build/CMakeFiles/MultiPandOS_phase2.dir
+/home/nico/PandAOSsh/build/CMakeFiles/phase2.dir
+/home/nico/PandAOSsh/build/CMakeFiles/edit_cache.dir
+/home/nico/PandAOSsh/build/CMakeFiles/rebuild_cache.dir

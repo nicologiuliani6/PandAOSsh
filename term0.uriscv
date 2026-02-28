@@ -1,13 +1,56 @@
-123456
-1 1.1
+
+[BOOT] === Kernel main start ===
+[INIT] Setting PassUpVector...
+[OK] PassUpVector configured.
+[INIT] Initializing PCB and ASL...
+[OK] Phase 1 structures initialized.
+[INIT] Initializing global variables...
+[OK] Global variables initialized.
+[INIT] Loading Interval Timer (100ms)...
+[OK] Interval Timer loaded.
+[INIT] Allocating test process PCB...
+[OK] PCB allocated.
+[OK] Test process inserted in ReadyQueue.
+[INFO] processCount = 1
+[SCHED] Entering scheduler...
+
+[SCHED] ===== Scheduler invoked =====
+[SCHED] ReadyQueue not empty: dispatching first process
+
 entrato in removeProcQ
 esco da removeProcQ
- 1.2 1.3 1.4 
-pc_epc: 20004530
-reg_sp: 20040000
-status: 00001880
-[EXC] cause=80000015
-[EXC] excCode=00000005
-interruptHandler: mip=00200008
--> Interval Timer (pseudo-clock)
-IT: returning to currentProcess
+[SCHED] Current process set
+[SCHED] startTOD=02a366cc 
+[SCHED] TIMESLICE * TIMESCALEADDR=004c4b40 
+[SCHED] Dispatching process pc_epc=20003da8 
+[SCHED] Dispatching process reg_sp=20040000 
+[SCHED] Dispatching process status=00001880 
+[SCHED] Loading process state and giving control...
+[EXC] cause=80000015 
+[EXC] excCode=00000005 
+[EXC] currentProcess=20008b0c 
+[EXC] Interrupt detected, calling interruptHandler()
+
+[INT] ===== Interrupt received =====
+[INT] MIP=00200088 
+[PLT] Timeslice expired
+[PLT] currentProcess=20008b0c 
+[PLT] pc_epc=20003da8 
+[PLT] status=00001880 
+[PLT] startTOD=02a366cc 
+[PLT] now=04ebf281 
+[PLT] Reinserting process in ReadyQueue
+[PLT] Calling scheduler
+
+[SCHED] ===== Scheduler invoked =====
+[SCHED] ReadyQueue not empty: dispatching first process
+
+entrato in removeProcQ
+esco da removeProcQ
+[SCHED] Current process set
+[SCHED] startTOD=0612e21d 
+[SCHED] TIMESLICE * TIMESCALEADDR=004c4b40 
+[SCHED] Dispatching process pc_epc=20003da8 
+[SCHED] Dispatching process reg_sp=20040000 
+[SCHED] Dispatching process status=00001880 
+[SCHED] Loading process state and giving control...
