@@ -10,6 +10,9 @@
 #include "../phase1/headers/asl.h"
 #include "./headers/globals.h"
 #include "debug.h"
+#ifndef CAUSE_EXCCODE_MASK
+#define CAUSE_EXCCODE_MASK 0xFFu
+#endif
 
 /* klog - debug buffer visibile nel debugger uRISCV */
 extern void klog_print(char *str);
@@ -114,15 +117,18 @@ static void terminateProcess(pcb_t *proc) {
         terminateProcess(child);
 
     /* 2. Gestione Semafori */
-    if (proc->p_semAdd != NULL) {
-        int *sem = proc->p_semAdd;
-        outBlocked(proc);
-        if (isDeviceSemaphore(sem)) {
-            softBlockCount--;
-        } else {
-            (*sem)++;
-        }
-    } else if (proc != currentProcess) {
+   if (proc->p_semAdd != NULL) {
+    int *sem = proc->p_semAdd;
+    outBlocked(proc);
+
+    proc->p_semAdd = NULL;   // ⭐ AGGIUNGI QUESTA RIGA
+
+    if (isDeviceSemaphore(sem)) {
+        softBlockCount--;
+    } else {
+        (*sem)++;
+    }
+} else if (proc != currentProcess) {
         outProcQ(&readyQueue, proc);
     }
 
@@ -155,14 +161,19 @@ static void programTrapHandler(void) {
  * exceptionHandler - entry point principale
  * ----------------------------------------------------------------------- */
 void exceptionHandler(void) {
-    state_t     *savedState = (state_t *) BIOSDATAPAGE;
-    unsigned int cause      = savedState->cause;
-    /*
-     * uRISCV ExecROM salva mcause PRIMA di qualsiasi modifica -> cause e' il
-     * valore originale di mcause. bit31=1 indica interrupt, bit30..0 = excCode.
-     * GETEXECCODE/CAUSESHIFT sono costanti MIPS e non vanno usate qui.
-     */
-    unsigned int excCode    = cause & 0x7FFFFFFF;
+
+    state_t *savedState = (state_t *) BIOSDATAPAGE;
+
+    /* CPU time accounting */
+    cpu_t now;
+    STCK(now);
+    if (currentProcess != NULL) {
+        currentProcess->p_time += (now - startTOD);
+    }
+    startTOD = now;
+
+    unsigned int cause   = savedState->cause;
+    unsigned int excCode = cause & CAUSE_EXCCODE_MASK;
 
     /* klog: visibile nel debugger anche senza output terminale */
     //klog_print("EXC "); klog_print_hex(cause); klog_print("\n");
@@ -200,6 +211,13 @@ void exceptionHandler(void) {
     }
     else {
         programTrapHandler();
+    }
+    if (currentProcess != NULL) {
+        /* Il processo corrente è ancora vivo e non bloccato: riprende lui */
+        LDST(&currentProcess->p_s);
+    } else {
+        /* Il processo è stato terminato o bloccato: scegli un altro */
+        scheduler();
     }
 }
 
@@ -260,10 +278,17 @@ static void syscallHandler(state_t *savedState) {
                 savedState->reg_a0 = (unsigned int) child->p_pid;
             }
 
+            /* Avanza PC */
             savedState->pc_epc += WORDLEN;
-            LDST(savedState);
+
+            /* Salva lo stato aggiornato nel PCB */
+            copyState(&currentProcess->p_s, savedState);
+
+            /* Riprende il processo corrente */
+            LDST(&currentProcess->p_s);
             break;
         }
+
 
         /* ----------------------------------------------------------------
          * SYS2 - TERMPROCESS
@@ -326,21 +351,25 @@ static void syscallHandler(state_t *savedState) {
          * SYS3 - PASSEREN  (P)
          * a1 = int* semAddr
          * ---------------------------------------------------------------- */
-        case PASSEREN: {
-            int *semAddr = (int *) savedState->reg_a1;
-            (*semAddr)--;
-            savedState->pc_epc += WORDLEN;
-            if (*semAddr < 0) {
-                updateCPUTime();
-                copyState(&currentProcess->p_s, savedState);
-                insertBlocked(semAddr, currentProcess);
-                currentProcess = NULL;
-                scheduler();
-            } else {
-                LDST(savedState);
-            }
-            break;
-        }
+case PASSEREN: {
+    int *semAddr = (int *) savedState->reg_a1;
+    (*semAddr)--;
+    savedState->pc_epc += WORDLEN;
+
+    if (*semAddr < 0) {
+        updateCPUTime();
+        copyState(&currentProcess->p_s, savedState);
+
+        currentProcess->p_semAdd = semAddr;   // ⭐ FIX
+
+        insertBlocked(semAddr, currentProcess);
+        currentProcess = NULL;
+        scheduler();
+    } else {
+        LDST(savedState);
+    }
+    break;
+}
 
         /* ----------------------------------------------------------------
          * SYS4 - VERHOGEN  (V)

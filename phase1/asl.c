@@ -67,19 +67,30 @@ pcb_t* removeBlocked(int* semAdd) {
 /* Remove PCB "p" from its semaphore */
 pcb_t* outBlocked(pcb_t* p) {
     if (!p || !p->p_semAdd) return NULL;
+
     semd_t* s;
     list_for_each_entry(s, &semd_h, s_link) {
         if (s->s_key == p->p_semAdd) {
-            list_del(&p->p_list);
-            p->p_semAdd = NULL;
-            // se la coda diventa vuota, libera il semd
-            if (list_empty(&s->s_procq)) {
-                list_del(&s->s_link);
-                s->s_key = NULL;
-                list_add_tail(&s->s_link, &semdFree_h);
+
+            struct list_head* pos;
+            list_for_each(pos, &s->s_procq) {
+
+                if (pos == &p->p_list) {
+
+                    list_del(&p->p_list);
+                    p->p_semAdd = NULL;
+
+                    if (list_empty(&s->s_procq)) {
+                        list_del(&s->s_link);
+                        s->s_key = NULL;
+                        list_add_tail(&s->s_link, &semdFree_h);
+                    }
+
+                    return p;
+                }
             }
 
-            return p;
+            return NULL;
         }
     }
 

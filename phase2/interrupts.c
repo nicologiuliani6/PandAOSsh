@@ -1,10 +1,5 @@
 /*
  * interrupts.c - Phase 2 (Nucleus Interrupt Handler)
- *
- * Key fixes:
- *  - Decode interrupt source from CAUSE excCode (not from MIP).
- *  - Handle exactly ONE interrupt per entry (as per spec priority loop behavior).
- *  - Avoid debug prints inside interrupt handler (they generate terminal TX interrupts).
  */
 
 #include "../headers/const.h"
@@ -18,12 +13,10 @@
 
 extern void scheduler(void);
 
-/* If your headers don't define it, we provide a safe mask for the low excCode bits. */
 #ifndef CAUSE_EXCCODE_MASK
 #define CAUSE_EXCCODE_MASK 0xFFu
 #endif
 
-/* Set to 1 only for short debugging sessions (prints can cause terminal IRQ storms). */
 #define DEBUG_INT 0
 
 #if DEBUG_INT
@@ -42,23 +35,18 @@ static void copyState(state_t *dst, state_t *src) {
     }
 }
 
-/* Interrupting Devices Bit Map - spec:
- * Base 0x10000040, one word per interrupt line (lines 3-7).
- * Bit i set = device i on that line has a pending interrupt.
- */
+/* Interrupting Devices Bit Map */
 #define INT_BITMAP_BASE  0x10000040
 #define INT_BITMAP(line) (*((unsigned int *)(INT_BITMAP_BASE + ((line) - 3) * 0x4)))
 
-/* Device register base address:
- * devAddrBase = START_DEVREG + ((IntLineNo - 3) * 0x80) + (DevNo * 0x10)
- */
+/* Device register base address */
 #define DEV_REG_BASE(line, dev) \
     ((unsigned int *)(START_DEVREG + ((line) - 3) * 0x80 + (dev) * 0x10))
 
 #define DEV_STATUS(base)          ((base)[0])
 #define DEV_COMMAND(base)         ((base)[1])
 
-/* Terminal has 2 subdevices: recv and transm */
+/* Terminal subdevices */
 #define TERM_RECV_STATUS(base)    ((base)[0])
 #define TERM_RECV_COMMAND(base)   ((base)[1])
 #define TERM_TRANSM_STATUS(base)  ((base)[2])
@@ -78,7 +66,16 @@ void interruptHandler(void) {
     unsigned int cause   = savedState->cause;
     unsigned int excCode = cause & CAUSE_EXCCODE_MASK;
 
-    /* Optional debug (careful: printing here can create terminal interrupts!) */
+    /* CPU time accounting */
+    cpu_t now;
+    STCK(now);
+
+    if (currentProcess != NULL) {
+        currentProcess->p_time += (now - startTOD);
+    }
+    startTOD = now;
+
+    /* Optional debug */
     IDBG("\n[INT] ===== Interrupt received =====\n");
     IDBG_HEX("[INT] CAUSE=", cause);
     IDBG_HEX("[INT] excCode=", excCode);
@@ -93,18 +90,13 @@ void interruptHandler(void) {
 
         if (currentProcess != NULL) {
 
-            /* Update CPU time */
-            cpu_t now;
-            STCK(now);
-            currentProcess->p_time += (now - startTOD);
-
-            /* Save process state at exception time */
+            /* Salvo lo stato del processo al momento dell'interrupt */
             copyState(&currentProcess->p_s, savedState);
 
-            /* Ensure interrupts enabled when process resumes */
+            /* Assicuro che, quando riparte, abbia gli interrupt abilitati */
             currentProcess->p_s.status |= MSTATUS_MIE_MASK;
 
-            /* Round-robin: put back in ready queue */
+            /* Round-robin: rimetto in ready queue */
             insertProcQ(&readyQueue, currentProcess);
             currentProcess = NULL;
         }
@@ -132,8 +124,10 @@ void interruptHandler(void) {
         devSems[PSEUDOCLK_SEM] = 0;
 
         if (currentProcess != NULL) {
+            /* Nessun cambio di processo: riprende quello interrotto */
             LDST(savedState);
         } else {
+            /* Nessun processo corrente: schedula qualcun altro */
             scheduler();
         }
         return;
@@ -162,7 +156,7 @@ void interruptHandler(void) {
             unsigned int txStatus = TERM_TRANSM_STATUS(termBase) & 0xFFu;
             unsigned int rxStatus = TERM_RECV_STATUS(termBase) & 0xFFu;
 
-            /* TX has priority over RX */
+            /* TX ha priorità su RX */
             if (txStatus != READY && txStatus != BUSY) {
 
                 unsigned int savedStatus = TERM_TRANSM_STATUS(termBase);
