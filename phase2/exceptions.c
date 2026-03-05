@@ -11,6 +11,10 @@
 #include "./headers/globals.h"
 #include "debug.h"
 
+/* klog - debug buffer visibile nel debugger uRISCV */
+extern void klog_print(char *str);
+extern void klog_print_hex(unsigned int num);
+
 /* Prototipi interni */
 static void syscallHandler(state_t *savedState);
 static void tlbExceptionHandler(void);
@@ -145,23 +149,24 @@ static void programTrapHandler(void) {
  * exceptionHandler - entry point principale
  * ----------------------------------------------------------------------- */
 void exceptionHandler(void) {
-    /* RAW: scrivi 'E' direttamente sul terminale senza chiamate a funzione */
-    {
-        volatile unsigned int *s = (volatile unsigned int *)0x1000025C;
-        volatile unsigned int *c = (volatile unsigned int *)0x10000260;
-        while ((*s & 0xFF) == 3); /* wait not BUSY */
-        *c = 2 | ('E' << 8);
-        while ((*s & 0xFF) == 3); /* wait complete */
-    }
     state_t     *savedState = (state_t *) BIOSDATAPAGE;
     unsigned int cause      = savedState->cause;
-    unsigned int excCode    = (cause & GETEXECCODE) >> CAUSESHIFT;
+    /*
+     * uRISCV ExecROM salva mcause PRIMA di qualsiasi modifica -> cause e' il
+     * valore originale di mcause. bit31=1 indica interrupt, bit30..0 = excCode.
+     * GETEXECCODE/CAUSESHIFT sono costanti MIPS e non vanno usate qui.
+     */
+    unsigned int excCode    = cause & 0x7FFFFFFF;
+
+    /* klog: visibile nel debugger anche senza output terminale */
+    klog_print("EXC "); klog_print_hex(cause); klog_print("\n");
 
     debug_hex("[EXC] cause=",          cause);
     debug_hex("[EXC] excCode=",        excCode);
     debug_hex("[EXC] currentProcess=", (unsigned int)currentProcess);
 
     if (cause & 0x80000000) {
+        /* Interrupt */
         debug_print("[EXC] Interrupt -> interruptHandler()\n");
         interruptHandler();
     }
@@ -170,15 +175,14 @@ void exceptionHandler(void) {
         debug_hex("[SYSCALL] sysCode=", savedState->reg_a0);
         syscallHandler(savedState);
     }
-    else if (excCode >= 24 && excCode <= 28) {
-        /* TLB exceptions in uRISCV (custom excCodes, not standard RISC-V):
-         * 24-28 as per PandOSsh Phase 2 spec Section 5 */
-        debug_print("[EXC] TLB exception\n");
+    else if (excCode == 12 || excCode == 13 || excCode == 15) {
+        /* Page fault: instruction(12), load(13), store(15) */
+        debug_print("[EXC] TLB/Page fault\n");
         tlbExceptionHandler();
     }
     else {
-        /* Illegal instruction, breakpoint, ecc. */
-        debug_print("[EXC] Program Trap\n");
+        /* Program trap */
+        debug_hex("[EXC] Program Trap excCode=", excCode);
         programTrapHandler();
     }
 }
@@ -195,8 +199,8 @@ static void syscallHandler(state_t *savedState) {
     /* Syscall negativa da user mode → program trap (PRIVINSTR) */
     if ((savedState->status & MSTATUS_MPP_MASK) == 0 && sysCode < 0) {
         debug_print("[SYSCALL] Privileged syscall in user mode\n");
-        savedState->cause = (savedState->cause & CLEAREXECCODE)
-                            | (PRIVINSTR << CAUSESHIFT);
+        /* uRISCV: cause = mcause originale, excCode nei bit [30:0] */
+        savedState->cause = PRIVINSTR;
         programTrapHandler();
         return;
     }

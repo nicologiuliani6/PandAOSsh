@@ -61,10 +61,10 @@ int main(void) {
     RAMTOP(ramtop);
 
     passUpVec->tlb_refill_handler  = (memaddr) uTLB_RefillHandler;
-    passUpVec->tlb_refill_stackPtr = KERNELSTACK;
+    passUpVec->tlb_refill_stackPtr = ramtop;
 
     passUpVec->exception_handler   = (memaddr) exceptionHandler;
-    passUpVec->exception_stackPtr  = KERNELSTACK;
+    passUpVec->exception_stackPtr  = ramtop;
 
     debug_print("[OK] PassUpVector configured.\n");
 
@@ -153,6 +153,25 @@ int main(void) {
     /* ------------------------------------------------------------------
      * 6. Avvia scheduler
      * ------------------------------------------------------------------ */
+    /*
+     * FIX: il kernel ha scritto sul terminale con debug_print (polling diretto).
+     * L'ultimo carattere trasmesso lascia il terminale TX in stato TRANSMITTED (5),
+     * che genera un interrupt TX pendente. Nessuno lo ha ancora ACKato perche'
+     * debug_print non usa il kernel interrupt handler.
+     * Se non facciamo ACK ora, il processo test verra' interrotto all'infinito
+     * da questo interrupt pendente appena partiranno gli interrupt.
+     */
+    {
+        volatile unsigned int *txStatus  = (volatile unsigned int *)0x1000025C;
+        volatile unsigned int *txCommand = (volatile unsigned int *)0x10000260;
+        unsigned int st = *txStatus & 0xFF;
+        if (st != 1 && st != 3) {   /* not READY(1) and not BUSY(3) */
+            *txCommand = 1;          /* ACK */
+            /* Aspetta che il terminale torni READY */
+            while ((*txStatus & 0xFF) == 3);
+        }
+    }
+
     debug_print("[SCHED] Entering scheduler...\n");
 
     extern void scheduler();

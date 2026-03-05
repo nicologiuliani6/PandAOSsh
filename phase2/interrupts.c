@@ -1,3 +1,12 @@
+/*
+ * interrupts.c - Phase 2 (Nucleus Interrupt Handler)
+ *
+ * Key fixes:
+ *  - Decode interrupt source from CAUSE excCode (not from MIP).
+ *  - Handle exactly ONE interrupt per entry (as per spec priority loop behavior).
+ *  - Avoid debug prints inside interrupt handler (they generate terminal TX interrupts).
+ */
+
 #include "../headers/const.h"
 #include "../headers/types.h"
 #include <uriscv/liburiscv.h>
@@ -9,69 +18,93 @@
 
 extern void scheduler(void);
 
+/* If your headers don't define it, we provide a safe mask for the low excCode bits. */
+#ifndef CAUSE_EXCCODE_MASK
+#define CAUSE_EXCCODE_MASK 0xFFu
+#endif
+
+/* Set to 1 only for short debugging sessions (prints can cause terminal IRQ storms). */
+#define DEBUG_INT 0
+
+#if DEBUG_INT
+#define IDBG(msg)            debug_print(msg)
+#define IDBG_HEX(msg, val)   debug_hex(msg, val)
+#else
+#define IDBG(msg)            do {} while (0)
+#define IDBG_HEX(msg, val)   do {} while (0)
+#endif
+
 static void copyState(state_t *dst, state_t *src) {
     unsigned int *d = (unsigned int *) dst;
     unsigned int *s = (unsigned int *) src;
-    for (int i = 0; i < STATE_T_SIZE_IN_BYTES / WORDLEN; i++)
+    for (int i = 0; i < STATE_T_SIZE_IN_BYTES / WORDLEN; i++) {
         d[i] = s[i];
+    }
 }
 
-/* Interrupting Devices Bit Map - spec Table 2:
+/* Interrupting Devices Bit Map - spec:
  * Base 0x10000040, one word per interrupt line (lines 3-7).
- * Bit i set = device i on that line has a pending interrupt. */
+ * Bit i set = device i on that line has a pending interrupt.
+ */
 #define INT_BITMAP_BASE  0x10000040
 #define INT_BITMAP(line) (*((unsigned int *)(INT_BITMAP_BASE + ((line) - 3) * 0x4)))
 
+/* Device register base address:
+ * devAddrBase = START_DEVREG + ((IntLineNo - 3) * 0x80) + (DevNo * 0x10)
+ */
 #define DEV_REG_BASE(line, dev) \
     ((unsigned int *)(START_DEVREG + ((line) - 3) * 0x80 + (dev) * 0x10))
 
 #define DEV_STATUS(base)          ((base)[0])
 #define DEV_COMMAND(base)         ((base)[1])
 
+/* Terminal has 2 subdevices: recv and transm */
 #define TERM_RECV_STATUS(base)    ((base)[0])
 #define TERM_RECV_COMMAND(base)   ((base)[1])
 #define TERM_TRANSM_STATUS(base)  ((base)[2])
 #define TERM_TRANSM_COMMAND(base) ((base)[3])
 
-#define MIP_BIT(il_no) (1u << (il_no))
-
-/* Returns the lowest-numbered device (highest priority) with a pending
- * interrupt on the given line, or -1 if none. */
 static int getHighestPriorityDevice(unsigned int bitmap) {
     for (int i = 0; i < 8; i++) {
-        if (bitmap & (1 << i)) return i;
+        if (bitmap & (1u << i)) return i;
     }
     return -1;
 }
 
 void interruptHandler(void) {
 
-    state_t     *savedState = (state_t *) BIOSDATAPAGE;
-    unsigned int mip        = getMIP();
+    state_t *savedState = (state_t *) BIOSDATAPAGE;
 
-    debug_print("\n[INT] ===== Interrupt received =====\n");
-    debug_hex("[INT] MIP=", mip);
+    unsigned int cause   = savedState->cause;
+    unsigned int excCode = cause & CAUSE_EXCCODE_MASK;
+
+    /* Optional debug (careful: printing here can create terminal interrupts!) */
+    IDBG("\n[INT] ===== Interrupt received =====\n");
+    IDBG_HEX("[INT] CAUSE=", cause);
+    IDBG_HEX("[INT] excCode=", excCode);
 
     /* ================================================================ */
-    /* PLT - Processor Local Timer (timeslice)                          */
+    /* PLT interrupt (excCode == 7)                                     */
     /* ================================================================ */
-    if (mip & MIP_BIT(IL_CPUTIMER)) {
+    if (excCode == 7u) {
 
-        debug_print("[PLT] Timeslice expired\n");
-
-        /*
-         * BUG FIX: ricarichiamo il PLT subito per evitare loop di interrupt
-         * (il timer non va resettato a TIMESLICE qui: lo farà lo scheduler
-         * al prossimo dispatch; però deve essere disarmato per non restare
-         * in loop durante lo scheduler stesso).
-         */
+        /* Ack/disarm PLT */
         setTIMER((cpu_t) NEVER);
 
         if (currentProcess != NULL) {
+
+            /* Update CPU time */
             cpu_t now;
             STCK(now);
             currentProcess->p_time += (now - startTOD);
+
+            /* Save process state at exception time */
             copyState(&currentProcess->p_s, savedState);
+
+            /* Ensure interrupts enabled when process resumes */
+            currentProcess->p_s.status |= MSTATUS_MIE_MASK;
+
+            /* Round-robin: put back in ready queue */
             insertProcQ(&readyQueue, currentProcess);
             currentProcess = NULL;
         }
@@ -81,136 +114,103 @@ void interruptHandler(void) {
     }
 
     /* ================================================================ */
-    /* Interval Timer - Pseudo Clock                                    */
+    /* Interval timer (pseudo-clock) (excCode == 3)                     */
     /* ================================================================ */
-    if (mip & MIP_BIT(IL_TIMER)) {
+    if (excCode == 3u) {
 
-        debug_print("[IT] Pseudo-clock tick (100ms)\n");
-
+        /* Ack interval timer */
         LDIT(PSECOND);
 
-        pcb_t *unblocked;
-        int    count = 0;
-
-        while ((unblocked = removeBlocked(&devSems[PSEUDOCLK_SEM])) != NULL) {
-            debug_print("[IT] Unblocking process from pseudo-clock\n");
-            unblocked->p_semAdd   = NULL;
-            unblocked->p_s.reg_a0 = 0;
-            insertProcQ(&readyQueue, unblocked);
-            /*
-             * BUG FIX: softBlockCount è stato incrementato in CLOCKWAIT
-             * quando il processo si è bloccato; ora lo decrementiamo qui
-             * perché il processo torna pronto.
-             */
+        pcb_t *p;
+        while ((p = removeBlocked(&devSems[PSEUDOCLK_SEM])) != NULL) {
+            p->p_semAdd   = NULL;
+            p->p_s.reg_a0 = 0;
+            insertProcQ(&readyQueue, p);
             softBlockCount--;
-            count++;
         }
 
-        debug_hex("[IT] Processes unblocked=", count);
-
-        /*
-         * BUG FIX: il semaforo pseudo-clock va riportato a 0, non decrementato:
-         * tutti i processi in attesa vengono sbloccati col tick, quindi il
-         * semaforo riparte da 0 per il prossimo intervallo.
-         */
         devSems[PSEUDOCLK_SEM] = 0;
 
         if (currentProcess != NULL) {
-            debug_print("[IT] Returning to currentProcess\n");
             LDST(savedState);
         } else {
-            debug_print("[IT] No running process -> scheduler\n");
             scheduler();
         }
-
         return;
     }
 
     /* ================================================================ */
-    /* IPI - Inter-Processor Interrupt (linea 16)                       */
-    /* Su sistemi multiprocessore (NCPU > 1) possono arrivare IPI.      */
-    /* In Phase 2 non gestiamo IPC tra CPU: ignoriamo e torniamo.       */
+    /* Device interrupts: excCode 17..21 => lines 3..7                  */
     /* ================================================================ */
-    if (mip & MIP_BIT(IL_IPI)) {
-        debug_print("[IPI] Inter-processor interrupt ignored\n");
-        if (currentProcess != NULL) LDST(savedState);
-        else scheduler();
-        return;
-    }
+    if (excCode >= 17u && excCode <= 21u) {
 
-    /* ================================================================ */
-    /* Device Interrupt                                                  */
-    /* ================================================================ */
+        int intLineNo = (int)(excCode - 14u); /* 17->3 ... 21->7 */
+        unsigned int bitmap = INT_BITMAP(intLineNo);
+        int devNo = getHighestPriorityDevice(bitmap);
 
-    debug_print("[DEV] Device interrupt detected\n");
-
-    int intLineNo = -1;
-    int devNo     = -1;
-
-    for (int line = IL_DISK; line <= IL_TERMINAL; line++) {
-        if (mip & MIP_BIT(line)) {
-            unsigned int bitmap = INT_BITMAP(line);
-            if (bitmap != 0) {
-                intLineNo = line;
-                devNo     = getHighestPriorityDevice(bitmap);
-                debug_hex("[DEV] Line=", intLineNo);
-                debug_hex("[DEV] Device=", devNo);
-                break;
-            }
+        if (devNo < 0) {
+            /* Spurious: nothing in bitmap */
+            if (currentProcess != NULL) LDST(savedState);
+            else scheduler();
+            return;
         }
-    }
 
-    if (intLineNo == -1 || devNo == -1) {
-        debug_print("[DEV] Spurious interrupt (no device found)\n");
-        if (currentProcess != NULL) LDST(savedState);
-        else scheduler();
-        return;
-    }
+        /* Terminal line is 7 */
+        if (intLineNo == 7) {
 
-    /* ================= Terminal ================= */
+            unsigned int *termBase = DEV_REG_BASE(intLineNo, devNo);
+            unsigned int txStatus = TERM_TRANSM_STATUS(termBase) & 0xFFu;
+            unsigned int rxStatus = TERM_RECV_STATUS(termBase) & 0xFFu;
 
-    if (intLineNo == IL_TERMINAL) {
+            /* TX has priority over RX */
+            if (txStatus != READY && txStatus != BUSY) {
 
-        unsigned int *termBase = DEV_REG_BASE(intLineNo, devNo);
-        unsigned int  txStatus = TERM_TRANSM_STATUS(termBase) & 0xFF;
-        unsigned int  rxStatus = TERM_RECV_STATUS(termBase)   & 0xFF;
+                unsigned int savedStatus = TERM_TRANSM_STATUS(termBase);
+                TERM_TRANSM_COMMAND(termBase) = ACK;
 
-        debug_hex("[TERM] TX status=", txStatus);
-        debug_hex("[TERM] RX status=", rxStatus);
+                int semIdx = TERM_TX_SEM(devNo);
 
-        /*
-         * BUG FIX: controlliamo TX prima di RX, ma usiamo la variabile
-         * semIdx locale per ciascun ramo (non condivisa) per non rischiare
-         * di mescolare gli indici.
-         */
-        if (txStatus != READY && txStatus != BUSY) {
-
-            unsigned int savedStatus = TERM_TRANSM_STATUS(termBase);
-            TERM_TRANSM_COMMAND(termBase) = ACK;
-
-            int semIdx = TERM_TX_SEM(devNo);
-
-            /* V solo se un processo stava aspettando (DOIO aveva fatto P) */
-            if (devSems[semIdx] < 0) {
-                devSems[semIdx]++;
-                pcb_t *unblocked = removeBlocked(&devSems[semIdx]);
-                if (unblocked != NULL) {
-                    unblocked->p_s.reg_a0 = savedStatus;
-                    unblocked->p_semAdd   = NULL;
-                    insertProcQ(&readyQueue, unblocked);
-                    softBlockCount--;
+                if (devSems[semIdx] < 0) {
+                    devSems[semIdx]++;
+                    pcb_t *unblocked = removeBlocked(&devSems[semIdx]);
+                    if (unblocked != NULL) {
+                        unblocked->p_s.reg_a0 = savedStatus;
+                        unblocked->p_semAdd   = NULL;
+                        insertProcQ(&readyQueue, unblocked);
+                        softBlockCount--;
+                    }
                 }
             }
-            /* else: interrupt da debug_print diretta, nessun processo da sbloccare */
 
-        }
+            if (rxStatus != READY && rxStatus != BUSY) {
 
-        if (rxStatus != READY && rxStatus != BUSY) {
+                unsigned int savedStatus = TERM_RECV_STATUS(termBase);
+                TERM_RECV_COMMAND(termBase) = ACK;
 
-            unsigned int savedStatus = TERM_RECV_STATUS(termBase);
-            TERM_RECV_COMMAND(termBase) = ACK;
+                int semIdx = TERM_RX_SEM(devNo);
 
-            int semIdx = TERM_RX_SEM(devNo);
+                if (devSems[semIdx] < 0) {
+                    devSems[semIdx]++;
+                    pcb_t *unblocked = removeBlocked(&devSems[semIdx]);
+                    if (unblocked != NULL) {
+                        unblocked->p_s.reg_a0 = savedStatus;
+                        unblocked->p_semAdd   = NULL;
+                        insertProcQ(&readyQueue, unblocked);
+                        softBlockCount--;
+                    }
+                }
+            }
+
+        } else {
+
+            /* Other device lines */
+            unsigned int *devBase = DEV_REG_BASE(intLineNo, devNo);
+            unsigned int savedStatus = DEV_STATUS(devBase);
+
+            /* Ack */
+            DEV_COMMAND(devBase) = ACK;
+
+            int semIdx = DEV_SEM_BASE(intLineNo, devNo);
 
             if (devSems[semIdx] < 0) {
                 devSems[semIdx]++;
@@ -224,39 +224,17 @@ void interruptHandler(void) {
             }
         }
 
-    }
-    /* ================= Other devices ================= */
-
-    else {
-
-        unsigned int *devBase     = DEV_REG_BASE(intLineNo, devNo);
-        unsigned int  savedStatus = DEV_STATUS(devBase);
-
-        debug_hex("[DEV] Status=", savedStatus);
-        DEV_COMMAND(devBase) = ACK;
-
-        int semIdx = DEV_SEM_BASE(intLineNo, devNo);
-        debug_hex("[DEV] semIdx=", semIdx);
-
-        if (devSems[semIdx] < 0) {
-            devSems[semIdx]++;
-            pcb_t *unblocked = removeBlocked(&devSems[semIdx]);
-            if (unblocked != NULL) {
-                unblocked->p_s.reg_a0 = savedStatus;
-                unblocked->p_semAdd   = NULL;
-                insertProcQ(&readyQueue, unblocked);
-                softBlockCount--;
-            }
+        if (currentProcess != NULL) {
+            LDST(savedState);
+        } else {
+            scheduler();
         }
+        return;
     }
 
     /* ================================================================ */
-
-    if (currentProcess != NULL) {
-        debug_print("[INT] Returning to running process\n");
-        LDST(savedState);
-    } else {
-        debug_print("[INT] No running process -> scheduler\n");
-        scheduler();
-    }
+    /* Unknown interrupt code: just resume/schedule                      */
+    /* ================================================================ */
+    if (currentProcess != NULL) LDST(savedState);
+    else scheduler();
 }

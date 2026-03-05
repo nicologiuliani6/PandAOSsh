@@ -16,9 +16,50 @@
 [SCHED] ===== Scheduler invoked =====
 [SCHED] ReadyQueue not empty: dispatching first process
 [SCHED] Current process set
-[SCHED] startTOD=00013162 
-[SCHED] TIMESLICE * TIMESCALEADDR=004c4b40 
-[SCHED] Dispatching process pc_epc=20004338 
+[SCHED] startTOD=025ac01e 
+[SCHED] Dispatching process pc_epc=200041e0 
 [SCHED] Dispatching process reg_sp=20040000 
 [SCHED] Dispatching process status=00001888 
+[SCHED] TIMESLICE * TIMESCALEADDR=004c4b40 
 [SCHED] Loading process state and giving control...
+[EXC] cause=80000015 
+[EXC] excCode=00000015 
+[EXC] currentProcess=20008b0c 
+[EXC] Interrupt -> interruptHandler()
+[EXC] cause=80000007 
+[EXC] excCode=00000007 
+[EXC] currentProcess=20008b0c 
+[EXC] Interrupt -> interruptHandler()
+
+[SCHED] ===== Scheduler invoked =====
+[SCHED] ReadyQueue not empty: dispatching first process
+[SCHED] Current process set
+[SCHED] startTOD=04e7bcdf 
+[SCHED] Dispatching process pc_epc=200041e0 
+[SCHED] Dispatching process reg_sp=20040000 
+[SCHED] Dispatching process status=00001888 
+[SCHED] TIMESLICE * TIMESCALEADDR=004c4b40 
+[SCHED] Loading process state and giving control...
+[EXC] cause=80000015 
+[EXC] excCode=00000015 
+[EXC] currentProcess=20008b0c 
+[EXC] Interrupt -> interruptHandler()
+[EXC] cause=80000007 
+[EXC] excCode=00000007 
+[EXC] currentProcess=20008b0c 
+[EXC] Interrupt -> interruptHandler()
+
+[SCHED] ===== Scheduler invoked =====
+[SCHED] ReadyQueue not empty: dispatching first process
+[SCHED] Current process set
+[SCHED] startTOD=0774b99e 
+[SCHED] Dispatching process pc_epc=200041e0 
+[SCHED] Dispatching process reg_sp=20040000 
+[SCHED] Dispatching process status=00001888 
+[SCHED] TIMESLICE * TIMESCALEADDR=004c4b40 
+[SCHED] Loading process state and giving control...
+[EXC] cause=80000015 
+[EXC] excCode=00000015 
+[EXC] currentProcess=20008b0c 
+[EXC] Interrupt -> interruptHandler()
+[

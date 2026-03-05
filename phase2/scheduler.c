@@ -18,8 +18,8 @@
 #include "../phase1/headers/pcb.h"
 #include "./headers/globals.h"
 
-
 #include "debug.h"
+
 /*
  * scheduler()
  *
@@ -49,14 +49,16 @@ void scheduler(void) {
         STCK(startTOD);
         debug_hex("[SCHED] startTOD=", startTOD);
 
-        /* Carica PLT con timeslice */
-        setTIMER(TIMESLICE * (*((cpu_t *)TIMESCALEADDR)));
-        debug_hex("[SCHED] TIMESLICE * TIMESCALEADDR=", TIMESLICE * (*((cpu_t *)TIMESCALEADDR)));
-
-        /* Debug informazioni sul processo */
+        /* Debug informazioni sul processo (PRIMA di armare il PLT) */
         debug_hex("[SCHED] Dispatching process pc_epc=", (unsigned int)currentProcess->p_s.pc_epc);
         debug_hex("[SCHED] Dispatching process reg_sp=", (unsigned int)currentProcess->p_s.reg_sp);
         debug_hex("[SCHED] Dispatching process status=", (unsigned int)currentProcess->p_s.status);
+
+        /* Armare il PLT deve essere l'ULTIMA cosa prima di LDST,
+           altrimenti debug_print brucia il timeslice e scatta subito l'interrupt. */
+        cpu_t plt = TIMESLICE * (*((cpu_t *)TIMESCALEADDR));
+        setTIMER(plt);
+        debug_hex("[SCHED] TIMESLICE * TIMESCALEADDR=", (unsigned int)plt);
 
         debug_print("[SCHED] Loading process state and giving control...\n");
         LDST(&(currentProcess->p_s));
