@@ -19,8 +19,7 @@
 #include "../phase1/headers/asl.h"
 #include "./headers/globals.h"
 
-/* Dichiarazione funzioni esterne */
-extern void test();           /* processo di test fornito */
+extern void test();
 extern void uTLB_RefillHandler();
 extern void exceptionHandler();
 
@@ -34,8 +33,11 @@ pcb_t           *currentProcess;
 int              devSems[TOT_SEMS];
 cpu_t            startTOD;
 
+/* Array globale di tutti i processi vivi, indicizzato per slot 0..MAXPROC-1 */
+pcb_t           *activeProcs[MAXPROC];
 
 #include "debug.h"
+
 /* -----------------------------------------------------------------------
  * main() - inizializzazione del Nucleo
  * ----------------------------------------------------------------------- */
@@ -49,6 +51,14 @@ int main(void) {
     debug_print("[INIT] Setting PassUpVector...\n");
 
     passupvector_t *passUpVec = (passupvector_t *) PASSUPVECTOR;
+
+    /*
+     * KERNELSTACK (0x20001000) si sovrappone al codice kernel.
+     * Usiamo RAMTOP come cima dello stack kernel (cresce verso il basso).
+     * Il processo test usera ramtop - PAGESIZE come proprio stack.
+     */
+    memaddr ramtop;
+    RAMTOP(ramtop);
 
     passUpVec->tlb_refill_handler  = (memaddr) uTLB_RefillHandler;
     passUpVec->tlb_refill_stackPtr = KERNELSTACK;
@@ -80,11 +90,14 @@ int main(void) {
     currentProcess = NULL;
     mkEmptyProcQ(&readyQueue);
 
-    for (int i = 0; i < TOT_SEMS; i++) {
+    for (int i = 0; i < TOT_SEMS; i++)
         devSems[i] = 0;
-    }
 
     startTOD = 0;
+
+    /* Inizializza array processi attivi */
+    for (int i = 0; i < MAXPROC; i++)
+        activeProcs[i] = NULL;
 
     debug_print("[OK] Global variables initialized.\n");
 
@@ -112,26 +125,29 @@ int main(void) {
 
     debug_print("[OK] PCB allocated.\n");
 
-    testPcb->p_s.status  = MSTATUS_MPIE_MASK | MSTATUS_MPP_M;
+    testPcb->p_s.status  = MSTATUS_MIE_MASK | MSTATUS_MPIE_MASK | MSTATUS_MPP_M;
     testPcb->p_s.mie     = MIE_ALL;
 
-    memaddr ramtop;
-    RAMTOP(ramtop);
-
-    testPcb->p_s.reg_sp = ramtop;
-    testPcb->p_s.pc_epc = (memaddr) test;
-
+    testPcb->p_s.reg_sp      = ramtop;
+    testPcb->p_s.pc_epc      = (memaddr) test;
     testPcb->p_parent        = NULL;
     testPcb->p_semAdd        = NULL;
     testPcb->p_supportStruct = NULL;
     testPcb->p_time          = 0;
     testPcb->p_prio          = PROCESS_PRIO_LOW;
 
+    /* Registra nella lista globale */
+    for (int i = 0; i < MAXPROC; i++) {
+        if (activeProcs[i] == NULL) {
+            activeProcs[i] = testPcb;
+            break;
+        }
+    }
+
     insertProcQ(&readyQueue, testPcb);
     processCount++;
 
     debug_print("[OK] Test process inserted in ReadyQueue.\n");
-    debug_print("[INFO] processCount = 1\n");
 
 
     /* ------------------------------------------------------------------
@@ -142,7 +158,7 @@ int main(void) {
     extern void scheduler();
     scheduler();
 
-    debug_print("[ERROR] Returned from scheduler! (Should never happen)\n");
-
+    /* Non si dovrebbe mai arrivare qui */
+    debug_print("[ERROR] Returned from scheduler!\n");
     return 0;
 }

@@ -32,8 +32,6 @@ add_executable(MultiPandOS_phase1 EXCLUDE_FROM_ALL
 )
 
 add_custom_target(phase1
-    # Copia l'eseguibile come MultiPandOS così elf2uriscv produce
-    # MultiPandOS.core.uriscv e MultiPandOS.stab.uriscv
     COMMAND ${CMAKE_COMMAND} -E copy
         ${PROJECT_BINARY_DIR}/MultiPandOS_phase1
         ${PROJECT_BINARY_DIR}/MultiPandOS
@@ -50,7 +48,7 @@ add_custom_target(phase1
 # -----------------------------------------------------------------------
 add_executable(MultiPandOS_phase2 EXCLUDE_FROM_ALL
     ./klog.c
-    ./phase2/debug.c              # <-- aggiunt
+    ./phase2/debug.c
     phase1/pcb.c
     phase1/asl.c
     phase2/initial.c

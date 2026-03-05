@@ -3,17 +3,8 @@
 static struct list_head pcbFree_h;
 static pcb_t pcbFree_table[MAXPROC];
 static int next_pid = 1;
-static void debug_print4(const char *msg) {
-    unsigned int *command = (unsigned int *)(0x10000254 + 3*4);
-    
-    while (*msg != '\0') {
-        *command = 2 | (((unsigned int)*msg) << 8);
-        /* delay */
-        for (volatile int i = 0; i < 10000; i++);
-        msg++;
-    }
-}
-/* Initialize "pcbFree_h" and add elements of "pcbFree_table" to the list "pcbFree_h"*/
+
+/* Initialize "pcbFree_h" and add elements of "pcbFree_table" to the list "pcbFree_h" */
 void initPcbs() {
     int i;
     INIT_LIST_HEAD(&pcbFree_h);
@@ -32,21 +23,21 @@ void freePcb(pcb_t* p) {
 
 /* Allocate new PCB removing one from list "pcbFree_h" if possible */
 pcb_t* allocPcb() {
-    struct list_head* pos;
-    pcb_t* new_pcb;
     if (list_empty(&pcbFree_h)) return NULL;
-    pos = pcbFree_h.next;
+
+    struct list_head *pos = pcbFree_h.next;
     list_del(pos);
-    new_pcb = container_of(pos, pcb_t, p_list);
+
+    pcb_t *new_pcb = container_of(pos, pcb_t, p_list);
     new_pcb->p_pid = next_pid++;
     INIT_LIST_HEAD(&new_pcb->p_list);
     INIT_LIST_HEAD(&new_pcb->p_child);
     INIT_LIST_HEAD(&new_pcb->p_sib);
-    new_pcb->p_parent = NULL;
-    new_pcb->p_semAdd = NULL;
+    new_pcb->p_parent        = NULL;
+    new_pcb->p_semAdd        = NULL;
     new_pcb->p_supportStruct = NULL;
-    new_pcb->p_time = 0;
-    new_pcb->p_prio = 0;
+    new_pcb->p_time          = 0;
+    new_pcb->p_prio          = 0;
 
     return new_pcb;
 }
@@ -63,8 +54,8 @@ int emptyProcQ(struct list_head* head) {
 
 /* Insert PCB "p" in the list "head" ordered by priority (highest first) */
 void insertProcQ(struct list_head* head, pcb_t* p) {
-    struct list_head* pos;
-    pcb_t* iter;
+    struct list_head *pos;
+    pcb_t *iter;
     list_for_each(pos, head) {
         iter = container_of(pos, pcb_t, p_list);
         if (p->p_prio > iter->p_prio) {
@@ -83,21 +74,17 @@ pcb_t* headProcQ(struct list_head* head) {
 
 /* Remove and return the first PCB in the list "head" */
 pcb_t* removeProcQ(struct list_head* head) {
-    debug_print4("\nentrato in removeProcQ");
-    struct list_head* first;
-    pcb_t* p;
     if (list_empty(head)) return NULL;
-    first = head->next;
+    struct list_head *first = head->next;
     list_del(first);
-    INIT_LIST_HEAD(first);   // <-- aggiungere questo
-    p = container_of(first, pcb_t, p_list);
-    debug_print4("\nesco da removeProcQ\n");
-    return p;
-}   
+    INIT_LIST_HEAD(first);
+    return container_of(first, pcb_t, p_list);
+}
+
 /* Remove PCB "p" from the list "head" */
 pcb_t* outProcQ(struct list_head* head, pcb_t* p) {
-    struct list_head* pos;
-    pcb_t* iter;
+    struct list_head *pos;
+    pcb_t *iter;
     list_for_each(pos, head) {
         iter = container_of(pos, pcb_t, p_list);
         if (iter == p) {
@@ -113,21 +100,13 @@ int emptyChild(pcb_t* p) {
     return list_empty(&p->p_child);
 }
 
-/*
- * Insert the PCB child "p" into the PCB parent "prnt".
- * I figli sono collegati tramite p_sib (lista fratelli),
- * la testa della lista è p_child del padre.
- * p_list rimane libera per la Ready Queue / ASL.
- */
+/* Insert the PCB child "p" into the PCB parent "prnt" */
 void insertChild(pcb_t *prnt, pcb_t *p) {
     p->p_parent = prnt;
     list_add_tail(&p->p_sib, &prnt->p_child);
 }
 
-/*
- * Remove and return the first child of the PCB "p".
- * Naviga tramite p_child → p_sib.
- */
+/* Remove and return the first child of the PCB "p" */
 pcb_t* removeChild(pcb_t* p) {
     if (!p || list_empty(&p->p_child)) return NULL;
     struct list_head *first = p->p_child.next;
@@ -138,14 +117,11 @@ pcb_t* removeChild(pcb_t* p) {
     return child;
 }
 
-/*
- * Remove and return the PCB "p" from its parent's children list.
- * Naviga tramite p_sib.
- */
+/* Remove and return the PCB "p" from its parent's children list */
 pcb_t* outChild(pcb_t* p) {
     if (!p || !p->p_parent) return NULL;
     list_del(&p->p_sib);
     INIT_LIST_HEAD(&p->p_sib);
     p->p_parent = NULL;
     return p;
-}
+}   
