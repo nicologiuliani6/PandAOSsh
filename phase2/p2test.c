@@ -101,6 +101,7 @@ unsigned int p5Stack; /* so we can allocate new stack for 2nd p5 */
 int      creation      = 0; /* return code for SYSCALL invocation */
 memaddr *p5MemLocation = 0; /* To cause a p5 trap */
 
+
 void p2(), p3(), p4(), p5(), p5a(), p5b(), p6(), p7(), p7a(), p5prog(), p5mm();
 void p5sys(), p8root(), child1(), child2(), p8leaf1(), p8leaf2(), p8leaf3(), p8leaf4(), p9(), p10(), hp_p1(), hp_p2();
 
@@ -144,6 +145,10 @@ void uTLB_RefillHandler() {
 /*                 p1 -- the root process                            */
 /*                                                                   */
 void test() {   
+    volatile unsigned int *s = (volatile unsigned int *)0x1000025C;
+    volatile unsigned int *c = (volatile unsigned int *)0x10000260;
+    while ((*s & 0xFF) == 3);
+    *c = 2 | ('T' << 8);
     debug_print("avvio test\n"); 
     SYSCALL(VERHOGEN, (int)&sem_testsem, 0, 0); /* V(sem_testsem)   */
     SYSCALL(VERHOGEN, (int)&sem_testsem, 0, 0);

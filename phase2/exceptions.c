@@ -108,27 +108,41 @@ static pcb_t *findProcessByPid(int target) {
 static void terminateProcess(pcb_t *proc) {
     if (!proc) return;
 
-    /* Prima termina tutti i figli ricorsivamente */
+    /* 1. Termina ricorsivamente i figli */
     pcb_t *child;
     while ((child = removeChild(proc)) != NULL)
         terminateProcess(child);
 
-    /* Rimuovi dalla lista globale */
-    activeProcs_remove(proc);
-
-    /* Se bloccato su un semaforo, rimuovi dall'ASL */
+    /* 2. Gestione Semafori (Il FIX) */
     if (proc->p_semAdd != NULL) {
-        outBlocked(proc);
-        /* Decrementa softBlockCount solo per device/clock semaphore */
-        if (isDeviceSemaphore(proc->p_semAdd))
-            softBlockCount--;
+        int *sem = proc->p_semAdd;
+        outBlocked(proc); // Rimuove il PCB dalla coda del semaforo
+        
+        if (isDeviceSemaphore(sem)) {
+            softBlockCount--; 
+        } else {
+            /* Se era un semaforo utente, dobbiamo "restituire" 
+               il credito che il processo stava aspettando */
+            (*sem)++; 
+        }
     } else if (proc != currentProcess) {
-        /* Rimuovi dalla ready queue solo se non è il processo corrente */
+        /* Rimuovi dalla ready queue solo se era lì (non running e non blocked) */
         outProcQ(&readyQueue, proc);
     }
 
-    /* Stacca dal padre e libera */
-    outChild(proc);
+    /* 3. Pulizia finale */
+    activeProcs_remove(proc);
+    outChild(proc); /* Stacca dal genitore */
+    /*
+     * Se il processo che stiamo liberando è currentProcess (può accadere
+     * durante la terminazione ricorsiva di un sotto-albero che lo contiene,
+     * es. p10 chiama TERMPROCESS(p9) e p9 è padre di p10) azzeriamo
+     * currentProcess prima di freePcb per evitare un dangling pointer.
+     * Il chiamante (TERMPROCESS) controlla currentProcess == NULL
+     * per decidere se invocare lo scheduler.
+     */
+    if (proc == currentProcess)
+        currentProcess = NULL;
     freePcb(proc);
     processCount--;
 }
@@ -260,6 +274,9 @@ static void syscallHandler(state_t *savedState) {
          * processo vivo, incluso il padre (caso p10 → termina p9).
          * Terminare un processo termina anche tutto il suo sottoalbero.
          * ---------------------------------------------------------------- */
+/* ----------------------------------------------------------------
+         * SYS2 - TERMPROCESS
+         * ---------------------------------------------------------------- */
         case TERMPROCESS: {
             debug_print("[SYSCALL] TERMPROCESS\n");
             int targetPid = (int) savedState->reg_a1;
@@ -267,15 +284,22 @@ static void syscallHandler(state_t *savedState) {
             updateCPUTime();
 
             if (targetPid == 0) {
+                /* Il processo vuole uccidere se stesso */
                 terminateProcess(currentProcess);
                 currentProcess = NULL;
             } else {
                 pcb_t *target = findProcessByPid(targetPid);
                 if (target) {
-                    int terminatingSelf = (target == currentProcess);
-                    terminateProcess(target);
-                    if (terminatingSelf) currentProcess = NULL;
+                    /* Se il target è il processo corrente, mettiamo currentProcess a NULL */
+                    if (target == currentProcess) {
+                        terminateProcess(target);
+                        currentProcess = NULL;
+                    } else {
+                        /* Uccidiamo un altro processo, noi restiamo vivi */
+                        terminateProcess(target);
+                    }
                 } else {
+                    /* PID non trovato: torniamo al chiamante con errore/nulla di fatto */
                     debug_print("[SYSCALL] TERMPROCESS: PID not found\n");
                     savedState->pc_epc += WORDLEN;
                     LDST(savedState);
@@ -283,7 +307,16 @@ static void syscallHandler(state_t *savedState) {
                 }
             }
 
-            scheduler();
+            /* --- QUI IL FIX --- */
+            if (currentProcess == NULL) {
+                /* Se il processo corrente è stato terminato, chiamiamo lo scheduler */
+                scheduler();
+            } else {
+                /* Se il processo corrente è ancora vivo (ha ucciso un altro), 
+                   deve proseguire con l'istruzione successiva alla syscall */
+                savedState->pc_epc += WORDLEN;
+                LDST(savedState);
+            }
             break;
         }
 
@@ -356,8 +389,12 @@ static void syscallHandler(state_t *savedState) {
             int dev     = (int)((offset % 0x80) / 0x10);
             int subword = (int)((offset % 0x10) / WORDLEN);
 
+            /*
+             * line here is the IntlineNo (3-7), NOT the IL_ constant (17-21).
+             * IntlineNo 7 = terminal (IL_TERMINAL - 14 = 21 - 14 = 7).
+             */
             int semIdx;
-            if (line == IL_TERMINAL)
+            if (line == 7)  /* IntlineNo for IL_TERMINAL */
                 semIdx = (subword == 3) ? TERM_TX_SEM(dev) : TERM_RX_SEM(dev);
             else
                 semIdx = DEV_SEM_BASE(line, dev);
