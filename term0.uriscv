@@ -1,65 +1,33 @@
-
-[BOOT] === Kernel main start ===
-[INIT] Setting PassUpVector...
-[OK] PassUpVector configured.
-[INIT] Initializing PCB and ASL...
-[OK] Phase 1 structures initialized.
-[INIT] Initializing global variables...
-[OK] Global variables initialized.
-[INIT] Loading Interval Timer (100ms)...
-[OK] Interval Timer loaded.
-[INIT] Allocating test process PCB...
-[OK] PCB allocated.
-[OK] Test process inserted in ReadyQueue.
-[SCHED] Entering scheduler...
-
-[SCHED] ===== Scheduler invoked =====
-[SCHED] ReadyQueue not empty: dispatching first process
-[SCHED] Current process set
-[SCHED] startTOD=025ac01e 
-[SCHED] Dispatching process pc_epc=200041e0 
-[SCHED] Dispatching process reg_sp=20040000 
-[SCHED] Dispatching process status=00001888 
-[SCHED] TIMESLICE * TIMESCALEADDR=004c4b40 
-[SCHED] Loading process state and giving control...
-[EXC] cause=80000015 
-[EXC] excCode=00000015 
-[EXC] currentProcess=20008b0c 
-[EXC] Interrupt -> interruptHandler()
-[EXC] cause=80000007 
-[EXC] excCode=00000007 
-[EXC] currentProcess=20008b0c 
-[EXC] Interrupt -> interruptHandler()
-
-[SCHED] ===== Scheduler invoked =====
-[SCHED] ReadyQueue not empty: dispatching first process
-[SCHED] Current process set
-[SCHED] startTOD=04e7bcdf 
-[SCHED] Dispatching process pc_epc=200041e0 
-[SCHED] Dispatching process reg_sp=20040000 
-[SCHED] Dispatching process status=00001888 
-[SCHED] TIMESLICE * TIMESCALEADDR=004c4b40 
-[SCHED] Loading process state and giving control...
-[EXC] cause=80000015 
-[EXC] excCode=00000015 
-[EXC] currentProcess=20008b0c 
-[EXC] Interrupt -> interruptHandler()
-[EXC] cause=80000007 
-[EXC] excCode=00000007 
-[EXC] currentProcess=20008b0c 
-[EXC] Interrupt -> interruptHandler()
-
-[SCHED] ===== Scheduler invoked =====
-[SCHED] ReadyQueue not empty: dispatching first process
-[SCHED] Current process set
-[SCHED] startTOD=0774b99e 
-[SCHED] Dispatching process pc_epc=200041e0 
-[SCHED] Dispatching process reg_sp=20040000 
-[SCHED] Dispatching process status=00001888 
-[SCHED] TIMESLICE * TIMESCALEADDR=004c4b40 
-[SCHED] Loading process state and giving control...
-[EXC] cause=80000015 
-[EXC] excCode=00000015 
-[EXC] currentProcess=20008b0c 
-[EXC] Interrupt -> interruptHandler()
-[
+Tp1 v(sem_testsem)
+p2 was started
+p2 starts
+p2 v's successfully
+p2 is OK
+p3 is started
+p3 - CLOCKWAIT OK
+error: p3 - CPU time incorrectly maintained
+hp_p1 starts
+hp_p2 starts
+first incarnation of p4 starts
+p5 starts
+p6 starts
+p7 starts
+p9 starts
+hp_p1 ends
+hp_p2 ends
+second incarnation of p4 starts
+memory management trap
+p10 starts
+p4 is OK
+Correct Support Structure Address
+Address Error (as expected): non-kuseg access w/KU=1
+High level SYS call from kernel mode process
+p1 knows p5 ended
+p8root starts
+child1 starts
+child2 starts
+leaf process (1) starts
+leaf process (2) starts
+leaf process (3) starts
+leaf process (4) starts
+E

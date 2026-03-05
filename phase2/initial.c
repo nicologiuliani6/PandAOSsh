@@ -1,16 +1,3 @@
-/*
- * initial.c
- *
- * Punto di entrata del Nucleo (main). Esegue l'inizializzazione una-tantum:
- *   - Dichiara le variabili globali di livello 3
- *   - Popola il Pass Up Vector del processore 0
- *   - Inizializza le strutture dati di livello 2 (Phase 1)
- *   - Inizializza tutte le variabili dichiarate
- *   - Carica l'Interval Timer con 100ms
- *   - Istanzia il processo di test
- *   - Chiama lo Scheduler
- */
-
 #include "../headers/const.h"
 #include "../headers/types.h"
 #include <uriscv/liburiscv.h>
@@ -22,113 +9,52 @@
 extern void test();
 extern void uTLB_RefillHandler();
 extern void exceptionHandler();
+extern void scheduler();
 
-/* -----------------------------------------------------------------------
- * Definizione variabili globali (dichiarate extern in globals.h)
- * ----------------------------------------------------------------------- */
 int              processCount;
 int              softBlockCount;
 struct list_head readyQueue;
 pcb_t           *currentProcess;
 int              devSems[TOT_SEMS];
 cpu_t            startTOD;
-
-/* Array globale di tutti i processi vivi, indicizzato per slot 0..MAXPROC-1 */
 pcb_t           *activeProcs[MAXPROC];
 
-#include "debug.h"
-
-/* -----------------------------------------------------------------------
- * main() - inizializzazione del Nucleo
- * ----------------------------------------------------------------------- */
 int main(void) {
-
-    debug_print("\n[BOOT] === Kernel main start ===\n");
-
-    /* ------------------------------------------------------------------
-     * 1. Popola il Pass Up Vector
-     * ------------------------------------------------------------------ */
-    debug_print("[INIT] Setting PassUpVector...\n");
-
+    /* 1. Pass Up Vector */
     passupvector_t *passUpVec = (passupvector_t *) PASSUPVECTOR;
-
-    /*
-     * KERNELSTACK (0x20001000) si sovrappone al codice kernel.
-     * Usiamo RAMTOP come cima dello stack kernel (cresce verso il basso).
-     * Il processo test usera ramtop - PAGESIZE come proprio stack.
-     */
     memaddr ramtop;
     RAMTOP(ramtop);
 
     passUpVec->tlb_refill_handler  = (memaddr) uTLB_RefillHandler;
     passUpVec->tlb_refill_stackPtr = ramtop;
-
     passUpVec->exception_handler   = (memaddr) exceptionHandler;
     passUpVec->exception_stackPtr  = ramtop;
 
-    debug_print("[OK] PassUpVector configured.\n");
-
-
-    /* ------------------------------------------------------------------
-     * 2. Inizializza Phase 1
-     * ------------------------------------------------------------------ */
-    debug_print("[INIT] Initializing PCB and ASL...\n");
-
+    /* 2. Phase 1 */
     initPcbs();
     initASL();
 
-    debug_print("[OK] Phase 1 structures initialized.\n");
-
-
-    /* ------------------------------------------------------------------
-     * 3. Inizializza variabili globali
-     * ------------------------------------------------------------------ */
-    debug_print("[INIT] Initializing global variables...\n");
-
+    /* 3. Variabili globali */
     processCount   = 0;
     softBlockCount = 0;
     currentProcess = NULL;
     mkEmptyProcQ(&readyQueue);
-
     for (int i = 0; i < TOT_SEMS; i++)
         devSems[i] = 0;
-
     startTOD = 0;
-
-    /* Inizializza array processi attivi */
     for (int i = 0; i < MAXPROC; i++)
         activeProcs[i] = NULL;
 
-    debug_print("[OK] Global variables initialized.\n");
-
-
-    /* ------------------------------------------------------------------
-     * 4. Carica Interval Timer
-     * ------------------------------------------------------------------ */
-    debug_print("[INIT] Loading Interval Timer (100ms)...\n");
-
+    /* 4. Interval Timer */
     LDIT(PSECOND);
 
-    debug_print("[OK] Interval Timer loaded.\n");
-
-
-    /* ------------------------------------------------------------------
-     * 5. Crea processo di test
-     * ------------------------------------------------------------------ */
-    debug_print("[INIT] Allocating test process PCB...\n");
-
+    /* 5. Processo test */
     pcb_t *testPcb = allocPcb();
-    if (testPcb == NULL) {
-        debug_print("[PANIC] No PCB available!\n");
-        PANIC();
-    }
+    if (testPcb == NULL) PANIC();
 
-    debug_print("[OK] PCB allocated.\n");
-
-    testPcb->p_s.status  = MSTATUS_MIE_MASK | MSTATUS_MPIE_MASK | MSTATUS_MPP_M;
-    testPcb->p_s.mie     = MIE_ALL;
-
-    testPcb->p_s.reg_sp      = ramtop;
+    testPcb->p_s.status      = MSTATUS_MIE_MASK | MSTATUS_MPIE_MASK | MSTATUS_MPP_M;
+    testPcb->p_s.mie         = MIE_ALL;
+    testPcb->p_s.reg_sp      = ramtop - PAGESIZE;
     testPcb->p_s.pc_epc      = (memaddr) test;
     testPcb->p_parent        = NULL;
     testPcb->p_semAdd        = NULL;
@@ -136,48 +62,12 @@ int main(void) {
     testPcb->p_time          = 0;
     testPcb->p_prio          = PROCESS_PRIO_LOW;
 
-    /* Registra nella lista globale */
-    for (int i = 0; i < MAXPROC; i++) {
-        if (activeProcs[i] == NULL) {
-            activeProcs[i] = testPcb;
-            break;
-        }
-    }
-
+    activeProcs[0] = testPcb;
     insertProcQ(&readyQueue, testPcb);
-    processCount++;
+    processCount = 1;
 
-    debug_print("[OK] Test process inserted in ReadyQueue.\n");
-
-
-    /* ------------------------------------------------------------------
-     * 6. Avvia scheduler
-     * ------------------------------------------------------------------ */
-    /*
-     * FIX: il kernel ha scritto sul terminale con debug_print (polling diretto).
-     * L'ultimo carattere trasmesso lascia il terminale TX in stato TRANSMITTED (5),
-     * che genera un interrupt TX pendente. Nessuno lo ha ancora ACKato perche'
-     * debug_print non usa il kernel interrupt handler.
-     * Se non facciamo ACK ora, il processo test verra' interrotto all'infinito
-     * da questo interrupt pendente appena partiranno gli interrupt.
-     */
-    {
-        volatile unsigned int *txStatus  = (volatile unsigned int *)0x1000025C;
-        volatile unsigned int *txCommand = (volatile unsigned int *)0x10000260;
-        unsigned int st = *txStatus & 0xFF;
-        if (st != 1 && st != 3) {   /* not READY(1) and not BUSY(3) */
-            *txCommand = 1;          /* ACK */
-            /* Aspetta che il terminale torni READY */
-            while ((*txStatus & 0xFF) == 3);
-        }
-    }
-
-    debug_print("[SCHED] Entering scheduler...\n");
-
-    extern void scheduler();
+    /* 6. Scheduler */
     scheduler();
 
-    /* Non si dovrebbe mai arrivare qui */
-    debug_print("[ERROR] Returned from scheduler!\n");
     return 0;
 }

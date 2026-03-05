@@ -113,40 +113,33 @@ static void terminateProcess(pcb_t *proc) {
     while ((child = removeChild(proc)) != NULL)
         terminateProcess(child);
 
-    /* 2. Gestione Semafori (Il FIX) */
+    /* 2. Gestione Semafori */
     if (proc->p_semAdd != NULL) {
         int *sem = proc->p_semAdd;
-        outBlocked(proc); // Rimuove il PCB dalla coda del semaforo
-        
+        outBlocked(proc);
         if (isDeviceSemaphore(sem)) {
-            softBlockCount--; 
+            softBlockCount--;
         } else {
-            /* Se era un semaforo utente, dobbiamo "restituire" 
-               il credito che il processo stava aspettando */
-            (*sem)++; 
+            (*sem)++;
         }
     } else if (proc != currentProcess) {
-        /* Rimuovi dalla ready queue solo se era lì (non running e non blocked) */
         outProcQ(&readyQueue, proc);
     }
 
     /* 3. Pulizia finale */
     activeProcs_remove(proc);
-    outChild(proc); /* Stacca dal genitore */
-    /*
-     * Se il processo che stiamo liberando è currentProcess (può accadere
-     * durante la terminazione ricorsiva di un sotto-albero che lo contiene,
-     * es. p10 chiama TERMPROCESS(p9) e p9 è padre di p10) azzeriamo
-     * currentProcess prima di freePcb per evitare un dangling pointer.
-     * Il chiamante (TERMPROCESS) controlla currentProcess == NULL
-     * per decidere se invocare lo scheduler.
-     */
+    outChild(proc);
+
     if (proc == currentProcess)
         currentProcess = NULL;
+
+    klog_print("TERM pid="); klog_print_hex((unsigned int)proc->p_pid);
+    klog_print(" pc=");      klog_print_hex((unsigned int)processCount);
+    //klog_print(" sem=");     klog_print_hex((unsigned int)proc->p_semAdd);
+
     freePcb(proc);
     processCount--;
 }
-
 /* -----------------------------------------------------------------------
  * Exception sub-handlers
  * ----------------------------------------------------------------------- */
@@ -158,7 +151,6 @@ static void tlbExceptionHandler(void) {
 static void programTrapHandler(void) {
     passUpOrDie(GENERALEXCEPT);
 }
-
 /* -----------------------------------------------------------------------
  * exceptionHandler - entry point principale
  * ----------------------------------------------------------------------- */
@@ -173,30 +165,40 @@ void exceptionHandler(void) {
     unsigned int excCode    = cause & 0x7FFFFFFF;
 
     /* klog: visibile nel debugger anche senza output terminale */
-    klog_print("EXC "); klog_print_hex(cause); klog_print("\n");
+    //klog_print("EXC "); klog_print_hex(cause); klog_print("\n");
 
     debug_hex("[EXC] cause=",          cause);
     debug_hex("[EXC] excCode=",        excCode);
     debug_hex("[EXC] currentProcess=", (unsigned int)currentProcess);
 
     if (cause & 0x80000000) {
-        /* Interrupt */
-        debug_print("[EXC] Interrupt -> interruptHandler()\n");
         interruptHandler();
     }
     else if (excCode == 8 || excCode == 11) {
-        /* ECALL da U-mode (8) o M-mode (11) */
-        debug_hex("[SYSCALL] sysCode=", savedState->reg_a0);
+        int sc = (int)savedState->reg_a0;
+        if (sc == -2) { /* TERMPROCESS o PANIC */
+            klog_print("ECALL sc="); klog_print_hex((unsigned int)sc);
+            klog_print(" pid="); klog_print_hex(currentProcess ? currentProcess->p_pid : 0);
+            klog_print("\n");
+        }
         syscallHandler(savedState);
     }
     else if (excCode == 12 || excCode == 13 || excCode == 15) {
-        /* Page fault: instruction(12), load(13), store(15) */
-        debug_print("[EXC] TLB/Page fault\n");
+        /* Page fault genuini → TLB handler → PGFAULTEXCEPT */
         tlbExceptionHandler();
     }
+    else if (excCode == 1 || excCode == 5 || excCode == 7) {
+        unsigned int mpp = savedState->status & MSTATUS_MPP_MASK;
+        if (mpp == 0) {
+            /* user mode access fault → simula ADDRERROR per il support handler */
+            savedState->cause = 5; // ADDRERROR dalla CPU, ma lo passeremo al support handler come GENERALEXCEPT
+            programTrapHandler();
+        } else {
+            /* kernel mode → PGFAULTEXCEPT */
+            tlbExceptionHandler();
+        }
+    }
     else {
-        /* Program trap */
-        debug_hex("[EXC] Program Trap excCode=", excCode);
         programTrapHandler();
     }
 }
@@ -236,14 +238,12 @@ static void syscallHandler(state_t *savedState) {
          * ret a0 = PID figlio, -1 se fallisce
          * ---------------------------------------------------------------- */
         case CREATEPROCESS: {
-            debug_print("[SYSCALL] CREATEPROCESS\n");
             state_t   *newState = (state_t *)  savedState->reg_a1;
             int        prio     = (int)         savedState->reg_a2;
             support_t *support  = (support_t *) savedState->reg_a3;
 
             pcb_t *child = allocPcb();
             if (!child) {
-                debug_print("[SYSCALL] CREATEPROCESS: no PCB\n");
                 savedState->reg_a0 = (unsigned int) -1;
             } else {
                 copyState(&child->p_s, newState);
@@ -257,7 +257,6 @@ static void syscallHandler(state_t *savedState) {
                 insertChild(currentProcess, child);
                 processCount++;
 
-                debug_hex("[SYSCALL] Created PID=", (unsigned int)child->p_pid);
                 savedState->reg_a0 = (unsigned int) child->p_pid;
             }
 
@@ -280,6 +279,9 @@ static void syscallHandler(state_t *savedState) {
         case TERMPROCESS: {
             debug_print("[SYSCALL] TERMPROCESS\n");
             int targetPid = (int) savedState->reg_a1;
+            klog_print("SYS2 caller="); klog_print_hex(currentProcess->p_pid);
+            klog_print(" target=");     klog_print_hex((unsigned int)targetPid);
+            klog_print(" pc=");         klog_print_hex((unsigned int)processCount);
             debug_hex("[SYSCALL] targetPid=", (unsigned int)targetPid);
             updateCPUTime();
 
@@ -325,13 +327,10 @@ static void syscallHandler(state_t *savedState) {
          * a1 = int* semAddr
          * ---------------------------------------------------------------- */
         case PASSEREN: {
-            debug_print("[SYSCALL] PASSEREN\n");
             int *semAddr = (int *) savedState->reg_a1;
             (*semAddr)--;
             savedState->pc_epc += WORDLEN;
-
             if (*semAddr < 0) {
-                debug_print("[SYSCALL] Blocked on semaphore\n");
                 updateCPUTime();
                 copyState(&currentProcess->p_s, savedState);
                 insertBlocked(semAddr, currentProcess);
@@ -348,14 +347,11 @@ static void syscallHandler(state_t *savedState) {
          * a1 = int* semAddr
          * ---------------------------------------------------------------- */
         case VERHOGEN: {
-            debug_print("[SYSCALL] VERHOGEN\n");
             int *semAddr = (int *) savedState->reg_a1;
             (*semAddr)++;
             if (*semAddr <= 0) {
                 pcb_t *unblocked = removeBlocked(semAddr);
                 if (unblocked) {
-                    debug_hex("[SYSCALL] Unblocked PID=",
-                              (unsigned int)unblocked->p_pid);
                     unblocked->p_semAdd = NULL;
                     insertProcQ(&readyQueue, unblocked);
                 }
@@ -511,16 +507,12 @@ static void syscallHandler(state_t *savedState) {
  * Senza → termina il processo e tutto il suo sottoalbero.
  * ----------------------------------------------------------------------- */
 static void passUpOrDie(int exceptionType) {
-    debug_hex("[EXC] passUpOrDie type=", (unsigned int)exceptionType);
-
     if (!currentProcess || !currentProcess->p_supportStruct) {
-        debug_print("[EXC] No support struct -> terminate\n");
         updateCPUTime();
         terminateProcess(currentProcess);
         currentProcess = NULL;
         scheduler();
     } else {
-        debug_print("[EXC] Passing up\n");
         support_t *sup = currentProcess->p_supportStruct;
         copyState(&sup->sup_exceptState[exceptionType], (state_t *) BIOSDATAPAGE);
         context_t *ctx = &sup->sup_exceptContext[exceptionType];
