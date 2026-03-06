@@ -1,9 +1,7 @@
 #ifndef DEBUG_H
 #define DEBUG_H
 
-#define DEBUG_ENABLED false
 
-#if DEBUG_ENABLED
 
 static inline void debug_print(const char *msg) {
     unsigned int *command = (unsigned int *)(0x10000254 + 3*4);
@@ -39,10 +37,4 @@ static inline void debug_hex(const char *label, unsigned int val) {
     for (volatile int i = 0; i < 10000; i++);
 }
 
-#else
-
-#define debug_print(x)  do {} while(0)
-#define debug_hex(x, y) do {} while(0)
-
-#endif
 #endif

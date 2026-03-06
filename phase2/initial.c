@@ -1,7 +1,6 @@
 #include "../headers/const.h"
 #include "../headers/types.h"
 #include <uriscv/liburiscv.h>
-
 #include "../phase1/headers/pcb.h"
 #include "../phase1/headers/asl.h"
 #include "./headers/globals.h"
@@ -26,9 +25,9 @@ int main(void) {
     RAMTOP(ramtop);
 
     passUpVec->tlb_refill_handler  = (memaddr) uTLB_RefillHandler;
-    passUpVec->tlb_refill_stackPtr = ramtop;
+    passUpVec->tlb_refill_stackPtr = ramtop;          /* FIX: ramtop riservato agli handler */
     passUpVec->exception_handler   = (memaddr) exceptionHandler;
-    passUpVec->exception_stackPtr  = ramtop;
+    passUpVec->exception_stackPtr  = ramtop - PAGESIZE; /* FIX: secondo frame per exception handler */
 
     /* 2. Phase 1 */
     initPcbs();
@@ -39,9 +38,13 @@ int main(void) {
     softBlockCount = 0;
     currentProcess = NULL;
     mkEmptyProcQ(&readyQueue);
+
     for (int i = 0; i < TOT_SEMS; i++)
         devSems[i] = 0;
-    startTOD = 0;
+
+    /* FIX: leggi il TOD reale invece di azzerarlo */
+    STCK(startTOD);
+
     for (int i = 0; i < MAXPROC; i++)
         activeProcs[i] = NULL;
 
@@ -54,7 +57,7 @@ int main(void) {
 
     testPcb->p_s.status      = MSTATUS_MIE_MASK | MSTATUS_MPIE_MASK | MSTATUS_MPP_M;
     testPcb->p_s.mie         = MIE_ALL;
-    testPcb->p_s.reg_sp      = ramtop - PAGESIZE;
+    testPcb->p_s.reg_sp      = ramtop - (2 * PAGESIZE); /* FIX: distanza sicura da entrambi gli handler stack */
     testPcb->p_s.pc_epc      = (memaddr) test;
     testPcb->p_parent        = NULL;
     testPcb->p_semAdd        = NULL;
