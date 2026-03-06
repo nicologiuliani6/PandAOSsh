@@ -7,7 +7,10 @@
 
 #include "../../headers/listx.h"
 #include "../../headers/types.h"
-
+// asl.h
+extern semd_t semd_table[MAXPROC];
+extern struct list_head semdFree_h;
+extern struct list_head semd_h;
 // Initialize the lists "semdFree_h" and "semd_h" and add all the elements of "semd_table" to "semdFree_h"
 void initASL();
 

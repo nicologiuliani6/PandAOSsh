@@ -1,3 +1,4 @@
+[INIT] Inizializzazione completata
 p1 v(sem_testsem)
 p2 was started
 p2 starts
@@ -23,6 +24,10 @@ Correct Support Structure Address
 Address Error (as expected): non-kuseg access w/KU=1
 High level SYS call from kernel mode process
 p1 knows p5 ended
+AAAAAAAAAAAAAAAAAAAAAAAA
+[TEST] sem_endp8 address = 2000705c 
+ value = 00000000 
+
 p8root starts
 child1 starts
 child2 starts

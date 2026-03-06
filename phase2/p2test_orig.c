@@ -219,7 +219,7 @@ void test() {
     p7state.pc_epc = (memaddr)p7;
     p7state.status |= MSTATUS_MIE_MASK | MSTATUS_MPP_M;
     p7state.mie = MIE_ALL;
-    
+
     STST(&p8rootstate);
     p8rootstate.reg_sp = p7state.reg_sp - QPAGE;
     p8rootstate.pc_epc = (memaddr)p8root;
@@ -273,7 +273,7 @@ void test() {
     p10state.pc_epc = (memaddr)p10;
     p10state.status |= MSTATUS_MIE_MASK | MSTATUS_MPP_M;
     p10state.mie = MIE_ALL;
-    
+
       /* create process p2 */
     p2pid = SYSCALL(CREATEPROCESS, (int)&p2state, PROCESS_PRIO_LOW, (int)NULL); /* start p2     */
 
@@ -322,8 +322,6 @@ void test() {
 
     /* now for a more rigorous check of process termination */
     for (p8inc = 0; p8inc < 4; p8inc++) {
-        print("AAAAAAAAAAAAAAAAAAAAAAAA\n");
-
         /* Reset semaphores */ 
         sem_blkp8 = 0;
         sem_endp8 = 0;
@@ -332,17 +330,13 @@ void test() {
         }
 
         p8pid = SYSCALL(CREATEPROCESS, (int)&p8rootstate, PROCESS_PRIO_LOW, (int)NULL);
-        debug_print("[TEST] sem_endp8 address = ");
-        debug_hex("", (unsigned int)&sem_endp8);
-        debug_print(" value = ");
-        debug_hex("", sem_endp8);
-        debug_print("\n");
-        SYSCALL(PASSEREN, (int)&sem_endp8, 0, 0); //qua mi provoca un crash alla prima iterazione, non riesco a capire se è un problema di p8root o del passaggio di semafori
+
+        SYSCALL(PASSEREN, (int)&sem_endp8, 0, 0);
     }
 
     print("p1 finishes OK -- TTFN\n");
     *((memaddr *)BADADDR) = 0; /* terminate p1 */
-    
+
     /* should not reach this point, since p1 just got a program trap */
     print("error: p1 still alive after progtrap & no trap vector\n");
     PANIC(); /* PANIC !!!     */

@@ -1,11 +1,10 @@
 #include "./headers/asl.h"
 
-/* Liste globali dei SEMD */
-static semd_t semd_table[MAXPROC];
-static struct list_head semdFree_h;
-static struct list_head semd_h;
+semd_t semd_table[MAXPROC];
+struct list_head semdFree_h;
+struct list_head semd_h;
 
-/* Initialize the lists "semdFree_h" and "semd_h" and add all the elements of "semd_table" to "semdFree_h" */
+// Init ASL come hai già
 void initASL() {
     INIT_LIST_HEAD(&semdFree_h);
     INIT_LIST_HEAD(&semd_h);
@@ -44,17 +43,14 @@ int insertBlocked(int* semAdd, pcb_t* p) {
 /* Remove the first PCB from the semaphore with key "semAdd" */
 pcb_t* removeBlocked(int* semAdd) {
     if (!semAdd) return NULL;
-
     semd_t* s;
     list_for_each_entry(s, &semd_h, s_link) {
         if (s->s_key == semAdd) {
-
-            if (list_empty(&s->s_procq))
-                return NULL;
-
+            if (list_empty(&s->s_procq)) return NULL;
             pcb_t* p = container_of(s->s_procq.next, pcb_t, p_list);
             list_del(&p->p_list);
-
+            p->p_semAdd = NULL;
+            // se la coda diventa vuota, libera il semd
             if (list_empty(&s->s_procq)) {
                 list_del(&s->s_link);
                 s->s_key = NULL;
@@ -64,7 +60,6 @@ pcb_t* removeBlocked(int* semAdd) {
             return p;
         }
     }
-
     return NULL;
 }
 

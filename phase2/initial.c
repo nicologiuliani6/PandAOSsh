@@ -4,6 +4,7 @@
 #include "../phase1/headers/pcb.h"
 #include "../phase1/headers/asl.h"
 #include "./headers/globals.h"
+#include "debug.h"
 
 extern void test();
 extern void uTLB_RefillHandler();
@@ -39,8 +40,7 @@ int main(void) {
     currentProcess = NULL;
     mkEmptyProcQ(&readyQueue);
 
-    for (int i = 0; i < TOT_SEMS; i++)
-        devSems[i] = 0;
+    for (int i = 0; i < TOT_SEMS; i++) devSems[i] = 0;
 
     /* FIX: leggi il TOD reale invece di azzerarlo */
     STCK(startTOD);
@@ -68,7 +68,7 @@ int main(void) {
     activeProcs[0] = testPcb;
     insertProcQ(&readyQueue, testPcb);
     processCount = 1;
-
+    debug_print("[INIT] Inizializzazione completata\n");
     /* 6. Scheduler */
     scheduler();
 

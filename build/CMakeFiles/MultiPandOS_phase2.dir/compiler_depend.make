@@ -29,6 +29,7 @@ CMakeFiles/MultiPandOS_phase2.dir/phase2/exceptions.c.o: /home/nico/PandAOSsh/ph
   /home/nico/PandAOSsh/headers/const.h \
   /home/nico/PandAOSsh/headers/listx.h \
   /home/nico/PandAOSsh/headers/const.h \
+  /home/nico/PandAOSsh/headers/listx.h \
   /home/nico/PandAOSsh/headers/types.h \
   /home/nico/PandAOSsh/headers/listx.h \
   /home/nico/PandAOSsh/headers/types.h \
@@ -55,6 +56,7 @@ CMakeFiles/MultiPandOS_phase2.dir/phase2/initial.c.o: /home/nico/PandAOSsh/phase
   /home/nico/PandAOSsh/headers/const.h \
   /home/nico/PandAOSsh/headers/types.h \
   /home/nico/PandAOSsh/phase2/headers/globals.h \
+  /home/nico/PandAOSsh/phase2/debug.h \
   /usr/include/uriscv/const.h \
   /usr/include/uriscv/csr.h \
   /usr/include/uriscv/liburiscv.h \
