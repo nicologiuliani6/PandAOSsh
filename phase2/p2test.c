@@ -146,10 +146,10 @@ void uTLB_RefillHandler() {
 /*                                                                   */
 void test() {   
     volatile unsigned int *s = (volatile unsigned int *)0x1000025C;
-    volatile unsigned int *c = (volatile unsigned int *)0x10000260;
+    //volatile unsigned int *c = (volatile unsigned int *)0x10000260;
     while ((*s & 0xFF) == 3);
-    *c = 2 | ('T' << 8);
-    debug_print("avvio test\n"); 
+    //*c = 2 | ('T' << 8);
+    //debug_print("avvio test\n"); 
     SYSCALL(VERHOGEN, (int)&sem_testsem, 0, 0); /* V(sem_testsem)   */
     SYSCALL(VERHOGEN, (int)&sem_testsem, 0, 0);
     SYSCALL(VERHOGEN, (int)&sem_testsem, 0, 0);

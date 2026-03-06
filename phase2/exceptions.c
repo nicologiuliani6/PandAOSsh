@@ -19,13 +19,19 @@
 extern void klog_print(char *str);
 extern void klog_print_hex(unsigned int num);
 
-/* Prototipi interni */
+/* -----------------------------------------------------------------------
+ * Prototipi interni
+ * ----------------------------------------------------------------------- */
 static void syscallHandler(state_t *savedState);
 static void tlbExceptionHandler(void);
 static void programTrapHandler(void);
 static void passUpOrDie(int exceptionType);
 static void terminateProcess(pcb_t *proc);
 static void updateCPUTime(void);
+
+/* Nuovo prototipo */
+static void blockCurrentProcess(int *sem);
+static void copyState(state_t *dst, state_t *src);
 
 extern void scheduler(void);
 extern void interruptHandler(void);
@@ -46,7 +52,23 @@ static void copyState(state_t *dst, state_t *src) {
     for (int i = 0; i < STATE_T_SIZE_IN_BYTES / WORDLEN; i++)
         d[i] = s[i];
 }
-
+/* -----------------------------------------------------------------------
+ * Helper per bloccare il processo corrente
+ * Aggiorna CPU time e blocca sul semaforo
+ * ----------------------------------------------------------------------- */
+static void blockCurrentProcess(int *sem) {
+    cpu_t now;
+    STCK(now);
+    if (currentProcess) {
+        currentProcess->p_time += now - startTOD; // aggiorna tempo CPU
+        startTOD = now;                           // nuovo startTOD globale
+        copyState(&currentProcess->p_s, &currentProcess->p_s); // salva stato
+        currentProcess->p_semAdd = sem;
+        insertBlocked(sem, currentProcess);
+        currentProcess = NULL;
+    }
+    scheduler(); // non ritorna
+}
 static void updateCPUTime(void) {
     if (currentProcess) {
         cpu_t now;
@@ -318,21 +340,17 @@ static void syscallHandler(state_t *savedState) {
         }
 
         /* ----------------------------------------------------------------
-         * SYS3 - PASSEREN  (P)
-         * a1 = int* semAddr
-         * ---------------------------------------------------------------- */
+        * SYS3 - PASSEREN  (P)
+        * a1 = int* semAddr
+        * ---------------------------------------------------------------- */
         case PASSEREN: {
             int *semAddr = (int *) savedState->reg_a1;
             (*semAddr)--;
             savedState->pc_epc += WORDLEN;
 
             if (*semAddr < 0) {
-                updateCPUTime();
                 copyState(&currentProcess->p_s, savedState);
-                currentProcess->p_semAdd = semAddr;
-                insertBlocked(semAddr, currentProcess);
-                currentProcess = NULL;
-                scheduler();
+                blockCurrentProcess(semAddr);
             } else {
                 LDST(savedState);
             }
@@ -340,16 +358,15 @@ static void syscallHandler(state_t *savedState) {
         }
 
         /* ----------------------------------------------------------------
-         * SYS4 - VERHOGEN  (V)
-         * a1 = int* semAddr
-         * ---------------------------------------------------------------- */
+        * SYS4 - VERHOGEN  (V)
+        * a1 = int* semAddr
+        * ---------------------------------------------------------------- */
         case VERHOGEN: {
             int *semAddr = (int *) savedState->reg_a1;
             (*semAddr)++;
 
             if (*semAddr <= 0) {
                 pcb_t *p = removeBlocked(semAddr);
-                /* FIX: removeBlocked può tornare NULL se la coda è inconsistente */
                 if (p != NULL) {
                     p->p_semAdd = NULL;
                     insertProcQ(&readyQueue, p);
@@ -362,10 +379,10 @@ static void syscallHandler(state_t *savedState) {
         }
 
         /* ----------------------------------------------------------------
-         * SYS5 - DOIO
-         * a1 = int* commandAddr  indirizzo registro comando del device
-         * a2 = int  commandValue valore da scrivere
-         * ---------------------------------------------------------------- */
+        * SYS5 - DOIO
+        * a1 = int* commandAddr  indirizzo registro comando del device
+        * a2 = int  commandValue valore da scrivere
+        * ---------------------------------------------------------------- */
         case DOIO: {
             int *commandAddr  = (int *) savedState->reg_a1;
             int  commandValue = (int)   savedState->reg_a2;
@@ -381,20 +398,16 @@ static void syscallHandler(state_t *savedState) {
             else
                 semIdx = DEV_SEM_BASE(line, dev);
 
-            /* Scrivi il comando nel device register */
             *commandAddr = commandValue;
-
             savedState->pc_epc += WORDLEN;
-            updateCPUTime();
             copyState(&currentProcess->p_s, savedState);
 
             devSems[semIdx]--;
             softBlockCount++;
-            insertBlocked(&devSems[semIdx], currentProcess);
-            currentProcess = NULL;
-            scheduler();
+            blockCurrentProcess(&devSems[semIdx]);
             break;
         }
+
 
         /* ----------------------------------------------------------------
          * SYS6 - GETTIME
@@ -409,18 +422,19 @@ static void syscallHandler(state_t *savedState) {
         }
 
         /* ----------------------------------------------------------------
-         * SYS7 - CLOCKWAIT
-         * ---------------------------------------------------------------- */
+        * SYS7 - CLOCKWAIT
+        * ---------------------------------------------------------------- */
         case CLOCKWAIT: {
             savedState->pc_epc += WORDLEN;
-            updateCPUTime();
             copyState(&currentProcess->p_s, savedState);
 
             devSems[PSEUDOCLK_SEM]--;
-            softBlockCount++;
-            insertBlocked(&devSems[PSEUDOCLK_SEM], currentProcess);
-            currentProcess = NULL;
-            scheduler();
+            if (devSems[PSEUDOCLK_SEM] < 0) {
+                softBlockCount++;
+                blockCurrentProcess(&devSems[PSEUDOCLK_SEM]);
+            } else {
+                LDST(savedState);
+            }
             break;
         }
 
@@ -455,11 +469,10 @@ static void syscallHandler(state_t *savedState) {
         }
 
         /* ----------------------------------------------------------------
-         * SYS10 - YIELD
-         * ---------------------------------------------------------------- */
+        * SYS10 - YIELD
+        * ---------------------------------------------------------------- */
         case YIELD: {
             savedState->pc_epc += WORDLEN;
-            updateCPUTime();
             copyState(&currentProcess->p_s, savedState);
             insertProcQ(&readyQueue, currentProcess);
             currentProcess = NULL;
