@@ -53,10 +53,10 @@ RM = /usr/bin/cmake -E rm -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/nico/PandAOSsh
+CMAKE_SOURCE_DIR = /home/nico/Desktop/PandAOSsh
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/nico/PandAOSsh/build
+CMAKE_BINARY_DIR = /home/nico/Desktop/PandAOSsh/build
 
 # Utility rule file for phase2.
 
@@ -67,9 +67,9 @@ include CMakeFiles/phase2.dir/compiler_depend.make
 include CMakeFiles/phase2.dir/progress.make
 
 CMakeFiles/phase2: MultiPandOS_phase2
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir=/home/nico/PandAOSsh/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) ">>> Build Phase 2 - carica config_machine.json nell'emulatore"
-	/usr/bin/cmake -E copy /home/nico/PandAOSsh/build/MultiPandOS_phase2 /home/nico/PandAOSsh/build/MultiPandOS
-	uriscv-elf2uriscv -k /home/nico/PandAOSsh/build/MultiPandOS
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir=/home/nico/Desktop/PandAOSsh/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) ">>> Build Phase 2 - carica config_machine.json nell'emulatore"
+	/usr/bin/cmake -E copy /home/nico/Desktop/PandAOSsh/build/MultiPandOS_phase2 /home/nico/Desktop/PandAOSsh/build/MultiPandOS
+	uriscv-elf2uriscv -k /home/nico/Desktop/PandAOSsh/build/MultiPandOS
 
 CMakeFiles/phase2.dir/codegen:
 .PHONY : CMakeFiles/phase2.dir/codegen
@@ -87,6 +87,6 @@ CMakeFiles/phase2.dir/clean:
 .PHONY : CMakeFiles/phase2.dir/clean
 
 CMakeFiles/phase2.dir/depend:
-	cd /home/nico/PandAOSsh/build && $(CMAKE_COMMAND) -E cmake_depends "Unix Makefiles" /home/nico/PandAOSsh /home/nico/PandAOSsh /home/nico/PandAOSsh/build /home/nico/PandAOSsh/build /home/nico/PandAOSsh/build/CMakeFiles/phase2.dir/DependInfo.cmake "--color=$(COLOR)"
+	cd /home/nico/Desktop/PandAOSsh/build && $(CMAKE_COMMAND) -E cmake_depends "Unix Makefiles" /home/nico/Desktop/PandAOSsh /home/nico/Desktop/PandAOSsh /home/nico/Desktop/PandAOSsh/build /home/nico/Desktop/PandAOSsh/build /home/nico/Desktop/PandAOSsh/build/CMakeFiles/phase2.dir/DependInfo.cmake "--color=$(COLOR)"
 .PHONY : CMakeFiles/phase2.dir/depend
 

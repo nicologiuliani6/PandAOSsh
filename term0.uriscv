@@ -4,35 +4,553 @@ p2 was started
 p2 starts
 p2 v's successfully
 p2 is OK
+[TERM] killing PID=00000002 
+ processCount(before)=00000002 
+
+[TERM] after kill PID=00000002 
+ processCount(after)=00000001 
+
 p3 is started
 p3 - CLOCKWAIT OK
 p3 - CPU time correctly maintained
+[TERM] killing PID=00000003 
+ processCount(before)=00000002 
+
+[TERM] after kill PID=00000003 
+ processCount(after)=00000001 
+
 hp_p1 starts
 hp_p2 starts
 first incarnation of p4 starts
 p5 starts
 p6 starts
+[TERM] killing PID=00000008 
+ processCount(before)=00000009 
+
+[TERM] after kill PID=00000008 
+ processCount(after)=00000008 
+
 p7 starts
+[TERM] killing PID=00000009 
+ processCount(before)=00000008 
+
+[TERM] after kill PID=00000009 
+ processCount(after)=00000007 
+
 p9 starts
 hp_p1 ends
+[TERM] killing PID=00000004 
+ processCount(before)=00000008 
+
+[TERM] after kill PID=00000004 
+ processCount(after)=00000007 
+
 hp_p2 ends
+[TERM] killing PID=00000005 
+ processCount(before)=00000007 
+
+[TERM] after kill PID=00000005 
+ processCount(after)=00000006 
+
 second incarnation of p4 starts
 memory management trap
 p10 starts
+[TERM] killing PID=0000000a 
+ processCount(before)=00000006 
+
+[TERM] killing PID=0000000c 
+ processCount(before)=00000006 
+
+[TERM] after kill PID=0000000c 
+ processCount(after)=00000005 
+
+[TERM] after kill PID=0000000a 
+ processCount(after)=00000004 
+
 p4 is OK
+[TERM] killing PID=00000006 
+ processCount(before)=00000004 
+
+[TERM] killing PID=0000000b 
+ processCount(before)=00000004 
+
+[TERM] after kill PID=0000000b 
+ processCount(after)=00000003 
+
+[TERM] after kill PID=00000006 
+ processCount(after)=00000002 
+
 Correct Support Structure Address
 Address Error (as expected): non-kuseg access w/KU=1
 High level SYS call from kernel mode process
-p1 knows p5 ended
-AAAAAAAAAAAAAAAAAAAAAAAA
-[TEST] sem_endp8 address = 2000705c 
- value = 00000000 
+[TERM] killing PID=00000007 
+ processCount(before)=00000002 
 
-p8root starts
-child1 starts
-child2 starts
-leaf process (1) starts
-leaf process (2) starts
-leaf process (3) starts
-leaf process (4) starts
-E
+[TERM] after kill PID=00000007 
+ processCount(after)=00000001 
+
+p1 knows p5 ended
+[TEST] ITER = 00000000 
+
+[TEST] &sem_blkp8      = 20008060 
+[TEST] &sem_endp8      = 2000805c 
+[TEST] &sem_testbinary = 20008068 
+[TEST] &sem_endcreate[0]= 20009d64 
+[TEST] &sem_endcreate[1]= 20009d68 
+[TEST] &sem_endcreate[2]= 20009d6c 
+[TEST] &sem_endcreate[3]= 20009d70 
+[TEST] dopo reset - sem_blkp8=00000000 
+[TEST] dopo reset - sem_testbinary=00000000 
+[TEST] p8pid = 0000000d 
+[TEST] sem_endp8 address = 2000805c 
+ value = 00000000 
+[DEBUG] p8root starts
+[DEBUG] p8root PID = 0000000d 
+[DEBUG] Creating child1
+[DEBUG] Creating child2
+[DEBUG] p8root waiting for sem_endcreate[00000000 
+] to be signaled, value before P = 00000000 
+[DEBUG] child1 starts
+[DEBUG] child1 PID = 0000000d 
+[DEBUG] child1 parent PID = 0000000d 
+[DEBUG] child1 created gchild1
+[DEBUG] child1 created gchild2
+[DEBUG] child1 waiting on sem_blkp8, value before P = 00000000 
+[DEBUG] child2 starts
+[DEBUG] child2 PID = 0000000d 
+[DEBUG] child2 parent PID = 0000000d 
+[DEBUG] child2 created gchild3
+[DEBUG] child2 created gchild4
+[DEBUG] child2 waiting on sem_blkp8, value before P = ffffffff 
+[DEBUG] leaf1 starts
+[DEBUG] leaf1 did V sem_testbinary
+p[DEBUG] leaf2 starts
+[DEBUG] leaf3 starts
+[DEBUG] leaf4 starts
+[DEBUG] sem_endcreate[00000000 
+] passed, value now = 00000000 
+[DEBUG] p8root waiting for sem_endcreate[00000001 
+] to be signaled, value before P = 00000001 
+[DEBUG] sem_endcreate[00000001 
+] passed, value now = 00000000 
+[DEBUG] p8root waiting for sem_endcreate[00000002 
+] to be signaled, value before P = 00000001 
+[DEBUG] sem_endcreate[00000002 
+] passed, value now = 00000000 
+[DEBUG] p8root waiting for sem_endcreate[00000003 
+] to be signaled, value before P = 00000001 
+[DEBUG] sem_endcreate[00000003 
+] passed, value now = 00000000 
+[DEBUG] p8root all leaves signaled, sem_endp8 before V = ffffffff 
+[DEBUG] p8root signaled sem_endp8, value now = 00000000 
+[DEBUG] p8root calling TERMPROCESS
+[TERM] killing PID=0000000d 
+ processCount(before)=0000000b 
+
+[TERM] killing PID=0000000e 
+ processCount(before)=0000000b 
+
+[TERM] killing PID=00000010 
+ processCount(before)=0000000b 
+
+[TERM] killing PID=00000014 
+ processCount(before)=0000000b 
+
+[TERM] after kill PID=00000014 
+ processCount(after)=0000000a 
+
+[TERM] after kill PID=00000010 
+ processCount(after)=00000009 
+
+[TERM] killing PID=00000011 
+ processCount(before)=00000009 
+
+[TERM] killing PID=00000015 
+ processCount(before)=00000009 
+
+[TERM] after kill PID=00000015 
+ processCount(after)=00000008 
+
+[TERM] after kill PID=00000011 
+ processCount(after)=00000007 
+
+[TERM] after kill PID=0000000e 
+ processCount(after)=00000006 
+
+[TERM] killing PID=0000000f 
+ processCount(before)=00000006 
+
+[TERM] killing PID=00000012 
+ processCount(before)=00000006 
+
+[TERM] after kill PID=00000012 
+ processCount(after)=00000005 
+
+[TERM] killing PID=00000013 
+ processCount(before)=00000005 
+
+[TERM] killing PID=00000016 
+ processCount(before)=00000005 
+
+[TERM] after kill PID=00000016 
+ processCount(after)=00000004 
+
+[TERM] after kill PID=00000013 
+ processCount(after)=00000003 
+
+[TERM] after kill PID=0000000f 
+ processCount(after)=00000002 
+
+[TERM] after kill PID=0000000d 
+ processCount(after)=00000001 
+
+[TEST] iterazione completata 00000000 
+
+[TEST] ITER = 00000001 
+
+[TEST] &sem_blkp8      = 20008060 
+[TEST] &sem_endp8      = 2000805c 
+[TEST] &sem_testbinary = 20008068 
+[TEST] &sem_endcreate[0]= 20009d64 
+[TEST] &sem_endcreate[1]= 20009d68 
+[TEST] &sem_endcreate[2]= 20009d6c 
+[TEST] &sem_endcreate[3]= 20009d70 
+[TEST] dopo reset - sem_blkp8=00000000 
+[TEST] dopo reset - sem_testbinary=00000000 
+[TEST] p8pid = 00000017 
+[TEST] sem_endp8 address = 2000805c 
+ value = 00000000 
+[DEBUG] p8root starts
+[DEBUG] p8root PID = 00000017 
+[DEBUG] Creating child1
+[DEBUG] Creating child2
+[DEBUG] p8root waiting for sem_endcreate[00000000 
+] to be signaled, value before P = 00000000 
+[DEBUG] child1 starts
+[DEBUG] child1 PID = 00000017 
+[DEBUG] child1 parent PID = 00000017 
+[DEBUG] child1 created gchild1
+[DEBUG] child1 created gchild2
+[DEBUG] child1 waiting on sem_blkp8, value before P = 00000000 
+[DEBUG] child2 starts
+[DEBUG] child2 PID = 00000017 
+[DEBUG] child2 parent PID = 00000017 
+[DEBUG] child2 created gchild3
+[DEBUG] child2 created gchild4
+[DEBUG] child2 waiting on sem_blkp8, value before P = ffffffff 
+[DEBUG] leaf1 starts
+[DEBUG] leaf1 did V sem_testbinary
+[DEBUG] leaf2 starts
+[DEBUG] leaf3 starts
+[DEBUG] leaf4 starts
+[DEBUG] sem_endcreate[00000000 
+] passed, value now = 00000000 
+[DEBUG] p8root waiting for sem_endcreate[00000001 
+] to be signaled, value before P = 00000001 
+[DEBUG] sem_endcreate[00000001 
+] passed, value now = 00000000 
+[DEBUG] p8root waiting for sem_endcreate[00000002 
+] to be signaled, value before P = 00000001 
+[DEBUG] sem_endcreate[00000002 
+] passed, value now = 00000000 
+[DEBUG] p8root waiting for sem_endcreate[00000003 
+] to be signaled, value before P = 00000001 
+[DEBUG] sem_endcreate[00000003 
+] passed, value now = 00000000 
+[DEBUG] p8root all leaves signaled, sem_endp8 before V = ffffffff 
+[DEBUG] p8root signaled sem_endp8, value now = 00000000 
+[DEBUG] p8root calling TERMPROCESS
+[TERM] killing PID=00000017 
+ processCount(before)=0000000b 
+
+[TERM] killing PID=00000018 
+ processCount(before)=0000000b 
+
+[TERM] killing PID=0000001a 
+ processCount(before)=0000000b 
+
+[TERM] killing PID=0000001e 
+ processCount(before)=0000000b 
+
+[TERM] after kill PID=0000001e 
+ processCount(after)=0000000a 
+
+[TERM] after kill PID=0000001a 
+ processCount(after)=00000009 
+
+[TERM] killing PID=0000001b 
+ processCount(before)=00000009 
+
+[TERM] killing PID=0000001f 
+ processCount(before)=00000009 
+
+[TERM] after kill PID=0000001f 
+ processCount(after)=00000008 
+
+[TERM] after kill PID=0000001b 
+ processCount(after)=00000007 
+
+[TERM] after kill PID=00000018 
+ processCount(after)=00000006 
+
+[TERM] killing PID=00000019 
+ processCount(before)=00000006 
+
+[TERM] killing PID=0000001c 
+ processCount(before)=00000006 
+
+[TERM] after kill PID=0000001c 
+ processCount(after)=00000005 
+
+[TERM] killing PID=0000001d 
+ processCount(before)=00000005 
+
+[TERM] killing PID=00000020 
+ processCount(before)=00000005 
+
+[TERM] after kill PID=00000020 
+ processCount(after)=00000004 
+
+[TERM] after kill PID=0000001d 
+ processCount(after)=00000003 
+
+[TERM] after kill PID=00000019 
+ processCount(after)=00000002 
+
+[TERM] after kill PID=00000017 
+ processCount(after)=00000001 
+
+[TEST] iterazione completata 00000001 
+
+[TEST] ITER = 00000002 
+
+[TEST] &sem_blkp8      = 20008060 
+[TEST] &sem_endp8      = 2000805c 
+[TEST] &sem_testbinary = 20008068 
+[TEST] &sem_endcreate[0]= 20009d64 
+[TEST] &sem_endcreate[1]= 20009d68 
+[TEST] &sem_endcreate[2]= 20009d6c 
+[TEST] &sem_endcreate[3]= 20009d70 
+[TEST] dopo reset - sem_blkp8=00000000 
+[TEST] dopo reset - sem_testbinary=00000000 
+[TEST] p8pid = 00000021 
+[TEST] sem_endp8 address = 2000805c 
+ value = 00000000 
+[DEBUG] p8root starts
+[DEBUG] p8root PID = 00000021 
+[DEBUG] Creating child1
+[DEBUG] Creating child2
+[DEBUG] p8root waiting for sem_endcreate[00000000 
+] to be signaled, value before P = 00000000 
+[DEBUG] child1 starts
+[DEBUG] child1 PID = 00000021 
+[DEBUG] child1 parent PID = 00000021 
+[DEBUG] child1 created gchild1
+[DEBUG] child1 created gchild2
+[DEBUG] child1 waiting on sem_blkp8, value before P = 00000000 
+[DEBUG] child2 starts
+[DEBUG] child2 PID = 00000021 
+[DEBUG] child2 parent PID = 00000021 
+[DEBUG] child2 created gchild3
+[DEBUG] child2 created gchild4
+[DEBUG] child2 waiting on sem_blkp8, value before P = ffffffff 
+[DEBUG] leaf1 starts
+[DEBUG] leaf1 did V sem_testbinary
+[DEBUG] leaf2 starts
+[DEBUG] leaf3 starts
+[DEBUG] leaf4 starts
+[DEBUG] sem_endcreate[00000000 
+] passed, value now = 00000000 
+[DEBUG] p8root waiting for sem_endcreate[00000001 
+] to be signaled, value before P = 00000001 
+[DEBUG] sem_endcreate[00000001 
+] passed, value now = 00000000 
+[DEBUG] p8root waiting for sem_endcreate[00000002 
+] to be signaled, value before P = 00000001 
+[DEBUG] sem_endcreate[00000002 
+] passed, value now = 00000000 
+[DEBUG] p8root waiting for sem_endcreate[00000003 
+] to be signaled, value before P = 00000001 
+[DEBUG] sem_endcreate[00000003 
+] passed, value now = 00000000 
+[DEBUG] p8root all leaves signaled, sem_endp8 before V = ffffffff 
+[DEBUG] p8root signaled sem_endp8, value now = 00000000 
+[DEBUG] p8root calling TERMPROCESS
+[TERM] killing PID=00000021 
+ processCount(before)=0000000b 
+
+[TERM] killing PID=00000022 
+ processCount(before)=0000000b 
+
+[TERM] killing PID=00000024 
+ processCount(before)=0000000b 
+
+[TERM] killing PID=00000028 
+ processCount(before)=0000000b 
+
+[TERM] after kill PID=00000028 
+ processCount(after)=0000000a 
+
+[TERM] after kill PID=00000024 
+ processCount(after)=00000009 
+
+[TERM] killing PID=00000025 
+ processCount(before)=00000009 
+
+[TERM] killing PID=00000029 
+ processCount(before)=00000009 
+
+[TERM] after kill PID=00000029 
+ processCount(after)=00000008 
+
+[TERM] after kill PID=00000025 
+ processCount(after)=00000007 
+
+[TERM] after kill PID=00000022 
+ processCount(after)=00000006 
+
+[TERM] killing PID=00000023 
+ processCount(before)=00000006 
+
+[TERM] killing PID=00000026 
+ processCount(before)=00000006 
+
+[TERM] after kill PID=00000026 
+ processCount(after)=00000005 
+
+[TERM] killing PID=00000027 
+ processCount(before)=00000005 
+
+[TERM] killing PID=0000002a 
+ processCount(before)=00000005 
+
+[TERM] after kill PID=0000002a 
+ processCount(after)=00000004 
+
+[TERM] after kill PID=00000027 
+ processCount(after)=00000003 
+
+[TERM] after kill PID=00000023 
+ processCount(after)=00000002 
+
+[TERM] after kill PID=00000021 
+ processCount(after)=00000001 
+
+[TEST] iterazione completata 00000002 
+
+[TEST] ITER = 00000003 
+
+[TEST] &sem_blkp8      = 20008060 
+[TEST] &sem_endp8      = 2000805c 
+[TEST] &sem_testbinary = 20008068 
+[TEST] &sem_endcreate[0]= 20009d64 
+[TEST] &sem_endcreate[1]= 20009d68 
+[TEST] &sem_endcreate[2]= 20009d6c 
+[TEST] &sem_endcreate[3]= 20009d70 
+[TEST] dopo reset - sem_blkp8=00000000 
+[TEST] dopo reset - sem_testbinary=00000000 
+[TEST] p8pid = 0000002b 
+[TEST] sem_endp8 address = 2000805c 
+ value = 00000000 
+[DEBUG] p8root starts
+[DEBUG] p8root PID = 0000002b 
+[DEBUG] Creating child1
+[DEBUG] Creating child2
+[DEBUG] p8root waiting for sem_endcreate[00000000 
+] to be signaled, value before P = 00000000 
+[DEBUG] child1 starts
+[DEBUG] child1 PID = 0000002b 
+[DEBUG] child1 parent PID = 0000002b 
+[DEBUG] child1 created gchild1
+[DEBUG] child1 created gchild2
+[DEBUG] child1 waiting on sem_blkp8, value before P = 00000000 
+[DEBUG] child2 starts
+[DEBUG] child2 PID = 0000002b 
+[DEBUG] child2 parent PID = 0000002b 
+[DEBUG] child2 created gchild3
+[DEBUG] child2 created gchild4
+[DEBUG] child2 waiting on sem_blkp8, value before P = ffffffff 
+[DEBUG] leaf1 starts
+[DEBUG] leaf1 did V sem_testbinary
+[DEBUG] leaf2 starts
+[DEBUG] leaf3 starts
+[DEBUG] leaf4 starts
+[DEBUG] sem_endcreate[00000000 
+] passed, value now = 00000000 
+[DEBUG] p8root waiting for sem_endcreate[00000001 
+] to be signaled, value before P = 00000001 
+[DEBUG] sem_endcreate[00000001 
+] passed, value now = 00000000 
+[DEBUG] p8root waiting for sem_endcreate[00000002 
+] to be signaled, value before P = 00000001 
+[DEBUG] sem_endcreate[00000002 
+] passed, value now = 00000000 
+[DEBUG] p8root waiting for sem_endcreate[00000003 
+] to be signaled, value before P = 00000001 
+[DEBUG] sem_endcreate[00000003 
+] passed, value now = 00000000 
+[DEBUG] p8root all leaves signaled, sem_endp8 before V = ffffffff 
+[DEBUG] p8root signaled sem_endp8, value now = 00000000 
+[DEBUG] p8root calling TERMPROCESS
+[TERM] killing PID=0000002b 
+ processCount(before)=0000000b 
+
+[TERM] killing PID=0000002c 
+ processCount(before)=0000000b 
+
+[TERM] killing PID=0000002e 
+ processCount(before)=0000000b 
+
+[TERM] killing PID=00000032 
+ processCount(before)=0000000b 
+
+[TERM] after kill PID=00000032 
+ processCount(after)=0000000a 
+
+[TERM] after kill PID=0000002e 
+ processCount(after)=00000009 
+
+[TERM] killing PID=0000002f 
+ processCount(before)=00000009 
+
+[TERM] killing PID=00000033 
+ processCount(before)=00000009 
+
+[TERM] after kill PID=00000033 
+ processCount(after)=00000008 
+
+[TERM] after kill PID=0000002f 
+ processCount(after)=00000007 
+
+[TERM] after kill PID=0000002c 
+ processCount(after)=00000006 
+
+[TERM] killing PID=0000002d 
+ processCount(before)=00000006 
+
+[TERM] killing PID=00000030 
+ processCount(before)=00000006 
+
+[TERM] after kill PID=00000030 
+ processCount(after)=00000005 
+
+[TERM] killing PID=00000031 
+ processCount(before)=00000005 
+
+[TERM] killing PID=00000034 
+ processCount(before)=00000005 
+
+[TERM] after kill PID=00000034 
+ processCount(after)=00000004 
+
+[TERM] after kill PID=00000031 
+ processCount(after)=00000003 
+
+[TERM] after kill PID=0000002d 
+ processCount(after)=00000002 
+
+[TERM] after kill PID=0000002b 
+ processCount(after)=00000001 
+
+[TEST] iterazione completata 00000003 
+
