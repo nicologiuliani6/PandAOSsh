@@ -23,8 +23,6 @@ CMakeFiles/MultiPandOS_phase2.dir/phase1/pcb.c.o: /home/nico/Desktop/PandAOSsh/p
   /usr/include/uriscv/csr.h \
   /usr/include/uriscv/types.h
 
-CMakeFiles/MultiPandOS_phase2.dir/phase2/debug.c.o: /home/nico/Desktop/PandAOSsh/phase2/debug.c
-
 CMakeFiles/MultiPandOS_phase2.dir/phase2/exceptions.c.o: /home/nico/Desktop/PandAOSsh/phase2/exceptions.c \
   /home/nico/Desktop/PandAOSsh/headers/const.h \
   /home/nico/Desktop/PandAOSsh/headers/listx.h \
@@ -121,8 +119,6 @@ MultiPandOS_phase2: /usr/local/share/uriscv/uriscvcore.ldscript
 
 /home/nico/Desktop/PandAOSsh/phase2/debug.h:
 
-/home/nico/Desktop/PandAOSsh/phase2/headers/globals.h:
-
 /usr/include/uriscv/types.h:
 
 /home/nico/Desktop/PandAOSsh/klog.c:
@@ -149,6 +145,6 @@ MultiPandOS_phase2: /usr/local/share/uriscv/uriscvcore.ldscript
 
 /home/nico/Desktop/PandAOSsh/phase1/pcb.c:
 
-/home/nico/Desktop/PandAOSsh/phase2/debug.c:
+/home/nico/Desktop/PandAOSsh/phase2/headers/globals.h:
 
 /home/nico/Desktop/PandAOSsh/phase2/exceptions.c:

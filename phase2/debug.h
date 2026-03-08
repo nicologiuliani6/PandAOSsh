@@ -24,17 +24,21 @@ static inline void debug_hex(const char *label, unsigned int val) {
         DELAY();
         p++;
     }
+
     char hex[9];
     for (int i = 7; i >= 0; i--) {
         int nibble = val & 0xF;
         hex[i] = nibble < 10 ? '0' + nibble : 'a' + nibble - 10;
         val >>= 4;
     }
+
     hex[8] = '\0';
+
     for (int i = 0; i < 8; i++) {
         *command = 2 | (((unsigned int)hex[i]) << 8);
         DELAY();
     }
+
     *command = 2 | (((unsigned int)' ') << 8);
     DELAY();
     *command = 2 | (((unsigned int)'\n') << 8);
@@ -43,8 +47,9 @@ static inline void debug_hex(const char *label, unsigned int val) {
 
 #else
 
-#define debug_print(x)  do {} while(0)
-#define debug_hex(x, y) do {} while(0)
+#define debug_print(msg) ((void)0)
+#define debug_hex(label, val) ((void)0)
 
 #endif
+
 #endif

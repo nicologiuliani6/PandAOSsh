@@ -26,9 +26,6 @@ CMakeFiles/MultiPandOS_phase2.dir/phase1/pcb.c.o
  /usr/include/uriscv/csr.h
  /usr/include/uriscv/types.h
 
-CMakeFiles/MultiPandOS_phase2.dir/phase2/debug.c.o
- /home/nico/Desktop/PandAOSsh/phase2/debug.c
-
 CMakeFiles/MultiPandOS_phase2.dir/phase2/exceptions.c.o
  /home/nico/Desktop/PandAOSsh/phase2/exceptions.c
  /home/nico/Desktop/PandAOSsh/headers/const.h

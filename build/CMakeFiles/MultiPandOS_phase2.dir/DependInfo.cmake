@@ -22,7 +22,6 @@ set(CMAKE_DEPENDS_DEPENDENCY_FILES
   "/home/nico/Desktop/PandAOSsh/klog.c" "CMakeFiles/MultiPandOS_phase2.dir/klog.c.o" "gcc" "CMakeFiles/MultiPandOS_phase2.dir/klog.c.o.d"
   "/home/nico/Desktop/PandAOSsh/phase1/asl.c" "CMakeFiles/MultiPandOS_phase2.dir/phase1/asl.c.o" "gcc" "CMakeFiles/MultiPandOS_phase2.dir/phase1/asl.c.o.d"
   "/home/nico/Desktop/PandAOSsh/phase1/pcb.c" "CMakeFiles/MultiPandOS_phase2.dir/phase1/pcb.c.o" "gcc" "CMakeFiles/MultiPandOS_phase2.dir/phase1/pcb.c.o.d"
-  "/home/nico/Desktop/PandAOSsh/phase2/debug.c" "CMakeFiles/MultiPandOS_phase2.dir/phase2/debug.c.o" "gcc" "CMakeFiles/MultiPandOS_phase2.dir/phase2/debug.c.o.d"
   "/home/nico/Desktop/PandAOSsh/phase2/exceptions.c" "CMakeFiles/MultiPandOS_phase2.dir/phase2/exceptions.c.o" "gcc" "CMakeFiles/MultiPandOS_phase2.dir/phase2/exceptions.c.o.d"
   "/home/nico/Desktop/PandAOSsh/phase2/initial.c" "CMakeFiles/MultiPandOS_phase2.dir/phase2/initial.c.o" "gcc" "CMakeFiles/MultiPandOS_phase2.dir/phase2/initial.c.o.d"
   "/home/nico/Desktop/PandAOSsh/phase2/interrupts.c" "CMakeFiles/MultiPandOS_phase2.dir/phase2/interrupts.c.o" "gcc" "CMakeFiles/MultiPandOS_phase2.dir/phase2/interrupts.c.o.d"

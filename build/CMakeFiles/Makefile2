@@ -120,7 +120,7 @@ CMakeFiles/MultiPandOS_phase1.dir/clean:
 CMakeFiles/phase1.dir/all: CMakeFiles/MultiPandOS_phase1.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase1.dir/build.make CMakeFiles/phase1.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase1.dir/build.make CMakeFiles/phase1.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/nico/Desktop/PandAOSsh/build/CMakeFiles --progress-num=20 "Built target phase1"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/nico/Desktop/PandAOSsh/build/CMakeFiles --progress-num=19 "Built target phase1"
 .PHONY : CMakeFiles/phase1.dir/all
 
 # Build rule for subdir invocation for target.
@@ -137,7 +137,7 @@ phase1: CMakeFiles/phase1.dir/rule
 # codegen rule for target.
 CMakeFiles/phase1.dir/codegen: CMakeFiles/MultiPandOS_phase1.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase1.dir/build.make CMakeFiles/phase1.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/nico/Desktop/PandAOSsh/build/CMakeFiles --progress-num=20 "Finished codegen for target phase1"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/nico/Desktop/PandAOSsh/build/CMakeFiles --progress-num=19 "Finished codegen for target phase1"
 .PHONY : CMakeFiles/phase1.dir/codegen
 
 # clean rule for target.
@@ -152,12 +152,12 @@ CMakeFiles/phase1.dir/clean:
 CMakeFiles/MultiPandOS_phase2.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/nico/Desktop/PandAOSsh/build/CMakeFiles --progress-num=8,9,10,11,12,13,14,15,16,17,18,19 "Built target MultiPandOS_phase2"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/nico/Desktop/PandAOSsh/build/CMakeFiles --progress-num=8,9,10,11,12,13,14,15,16,17,18 "Built target MultiPandOS_phase2"
 .PHONY : CMakeFiles/MultiPandOS_phase2.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/MultiPandOS_phase2.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/nico/Desktop/PandAOSsh/build/CMakeFiles 12
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/nico/Desktop/PandAOSsh/build/CMakeFiles 11
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/MultiPandOS_phase2.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/nico/Desktop/PandAOSsh/build/CMakeFiles 0
 .PHONY : CMakeFiles/MultiPandOS_phase2.dir/rule
@@ -169,7 +169,7 @@ MultiPandOS_phase2: CMakeFiles/MultiPandOS_phase2.dir/rule
 # codegen rule for target.
 CMakeFiles/MultiPandOS_phase2.dir/codegen:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/nico/Desktop/PandAOSsh/build/CMakeFiles --progress-num=8,9,10,11,12,13,14,15,16,17,18,19 "Finished codegen for target MultiPandOS_phase2"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/nico/Desktop/PandAOSsh/build/CMakeFiles --progress-num=8,9,10,11,12,13,14,15,16,17,18 "Finished codegen for target MultiPandOS_phase2"
 .PHONY : CMakeFiles/MultiPandOS_phase2.dir/codegen
 
 # clean rule for target.
@@ -184,12 +184,12 @@ CMakeFiles/MultiPandOS_phase2.dir/clean:
 CMakeFiles/phase2.dir/all: CMakeFiles/MultiPandOS_phase2.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase2.dir/build.make CMakeFiles/phase2.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase2.dir/build.make CMakeFiles/phase2.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/nico/Desktop/PandAOSsh/build/CMakeFiles --progress-num=21 "Built target phase2"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/nico/Desktop/PandAOSsh/build/CMakeFiles --progress-num=20 "Built target phase2"
 .PHONY : CMakeFiles/phase2.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/phase2.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/nico/Desktop/PandAOSsh/build/CMakeFiles 13
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/nico/Desktop/PandAOSsh/build/CMakeFiles 12
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/phase2.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/nico/Desktop/PandAOSsh/build/CMakeFiles 0
 .PHONY : CMakeFiles/phase2.dir/rule
@@ -201,7 +201,7 @@ phase2: CMakeFiles/phase2.dir/rule
 # codegen rule for target.
 CMakeFiles/phase2.dir/codegen: CMakeFiles/MultiPandOS_phase2.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase2.dir/build.make CMakeFiles/phase2.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/nico/Desktop/PandAOSsh/build/CMakeFiles --progress-num=21 "Finished codegen for target phase2"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/nico/Desktop/PandAOSsh/build/CMakeFiles --progress-num=20 "Finished codegen for target phase2"
 .PHONY : CMakeFiles/phase2.dir/codegen
 
 # clean rule for target.

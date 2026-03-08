@@ -19,7 +19,19 @@ int              devSems[TOT_SEMS];
 cpu_t            startTOD;
 pcb_t           *activeProcs[MAXPROC];
 
+
+#define DEBUG_INIT 1
+
+#if DEBUG_INIT
+#define IDBG(msg)           debug_print(msg)
+#define IDBG_HEX(msg,val)   debug_hex(msg,val)
+#else
+#define IDBG(msg)           ((void)0)
+#define IDBG_HEX(msg,val)   ((void)0)
+#endif
+
 int main(void) {
+    IDBG("[INIT] Inizializzazione in corso...\n");
     /* 1. Pass Up Vector */
     passupvector_t *passUpVec = (passupvector_t *) PASSUPVECTOR;
     memaddr ramtop;
@@ -31,10 +43,12 @@ int main(void) {
     passUpVec->exception_stackPtr  = ramtop - PAGESIZE; /* FIX: secondo frame per exception handler */
 
     /* 2. Phase 1 */
+    IDBG("[INIT] Inizializzazione PCB e ASL...\n");
     initPcbs();
     initASL();
 
     /* 3. Variabili globali */
+    IDBG("[INIT] Inizializzazione variabili globali...\n");
     processCount   = 0;
     softBlockCount = 0;
     currentProcess = NULL;
@@ -49,9 +63,11 @@ int main(void) {
         activeProcs[i] = NULL;
 
     /* 4. Interval Timer */
+    IDBG("[INIT] Inizializzazione timer...\n");
     LDIT(PSECOND);
 
     /* 5. Processo test */
+    IDBG("[INIT] Creazione processo di test...\n");
     pcb_t *testPcb = allocPcb();
     if (testPcb == NULL) PANIC();
 
@@ -68,9 +84,10 @@ int main(void) {
     activeProcs[0] = testPcb;
     insertProcQ(&readyQueue, testPcb);
     processCount = 1;
-    debug_print("[INIT] Inizializzazione completata\n");
+    IDBG("[INIT] Inizializzazione completata!\n");
     /* 6. Scheduler */
+    IDBG("[INIT] Avvio scheduler...\n");
     scheduler();
-
+    IDBG("[INIT] Errore: Scheduler terminato (impossibile!)\n");
     return 0;
 }

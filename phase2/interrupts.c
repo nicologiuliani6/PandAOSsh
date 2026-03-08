@@ -17,16 +17,18 @@ extern void scheduler(void);
 #define CAUSE_EXCCODE_MASK 0xFFu
 #endif
 
-#define DEBUG_INT_FRST 0
-#define debug_print(msg) do { if (DEBUG_INT_FRST) debug_print(msg); } while(0) 
-#define debug_hex(msg, val) do { if (DEBUG_INT_FRST) debug_hex(msg, val); } while(0)
-#define DEBUG_INT_SCD 0
-#if DEBUG_INT_SCD 
-#define IDBG(msg)            debug_print(msg)
-#define IDBG_HEX(msg, val)   debug_hex(msg, val)
+/* ================================================================ */
+/* Interrupt debug                                                  */
+/* ================================================================ */
+
+#define DEBUG_INT 0
+
+#if DEBUG_INT
+#define IDBG(msg)           debug_print(msg)
+#define IDBG_HEX(msg,val)   debug_hex(msg,val)
 #else
-#define IDBG(msg)            do {} while (0)
-#define IDBG_HEX(msg, val)   do {} while (0)
+#define IDBG(msg)           ((void)0)
+#define IDBG_HEX(msg,val)   ((void)0)
 #endif
 
 static void copyState(state_t *dst, state_t *src) {
@@ -170,13 +172,12 @@ void interruptHandler(void) {
                     devSems[semIdx]++;
                     pcb_t *unblocked = removeBlocked(&devSems[semIdx]);
                     if (unblocked != NULL) {
-                        debug_print("[INT] unblocking device PID=");
-                        debug_hex("", (unsigned int) unblocked->p_pid);
-                        debug_print(" semIdx=");
-                        debug_hex("", (unsigned int) semIdx);
-                        debug_print(" softBlockCount=");
-                        debug_hex("", (unsigned int) softBlockCount);
-                        debug_print("\n");
+                        IDBG("[INT] unblocking device PID=");
+                        IDBG_HEX("", (unsigned int) unblocked->p_pid);
+                        IDBG(" semIdx=");
+                        IDBG_HEX("", (unsigned int) semIdx);
+                        IDBG(" softBlockCount=");
+                        IDBG_HEX("", (unsigned int) softBlockCount);
 
                         unblocked->p_s.reg_a0 = savedStatus;
                         unblocked->p_semAdd   = NULL;

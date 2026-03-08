@@ -102,27 +102,31 @@ static pcb_t *findProcessByPid(int target) {
     return NULL;
 }
 
-static void terminateProcess(pcb_t *proc) {
-    if (!proc) return;
+static void terminateProcess(pcb_t *p) {
+    if (p == NULL) return;
 
-    debug_print("[TERM] killing PID=");
-    debug_hex("", (unsigned int)proc->p_pid);
-    debug_print(" processCount(before)=");
-    debug_hex("", (unsigned int)processCount);
-    debug_print("\n");
+    /* Evita doppi terminate */
+    if (p->p_pid == -1) return;
 
+    /* Marca come terminato */
+    int oldPid = p->p_pid;
+    p->p_pid = -1;
+
+    /* Termina ricorsivamente i figli */
     pcb_t *child;
-    while ((child = removeChild(proc)) != NULL) {
+    while ((child = removeChild(p)) != NULL) {
         terminateProcess(child);
     }
 
-    activeProcs_remove(proc);
+    /* Rimuovi da activeProcs */
+    activeProcs_remove(p);
 
-    if (proc->p_semAdd != NULL) {
-        int *sem = proc->p_semAdd;
+    /* Se era bloccato su un semaforo */
+    if (p->p_semAdd != NULL) {
+        int *sem = p->p_semAdd;
 
-        pcb_t *removed = outBlocked(proc);
-        proc->p_semAdd = NULL;
+        pcb_t *removed = outBlocked(p);
+        p->p_semAdd = NULL;
 
         if (removed != NULL) {
             if (isDeviceSemaphore(sem)) {
@@ -131,23 +135,21 @@ static void terminateProcess(pcb_t *proc) {
                 (*sem)++;
             }
         }
-    } else if (proc != currentProcess) {
-        outProcQ(&readyQueue, proc);
     }
 
-    outChild(proc);
+    /* Se era nella ready queue */
+    outProcQ(&readyQueue, p);
 
-    if (proc == currentProcess) currentProcess = NULL;
+    /* Se era il processo corrente */
+    if (p == currentProcess) {
+        currentProcess = NULL;
+    }
 
-    freePcb(proc);
+    freePcb(p);
     processCount--;
 
-    debug_print("[TERM] after kill PID=");
-    debug_hex("", (unsigned int)proc->p_pid);
-    debug_print(" processCount(after)=");
-    debug_hex("", (unsigned int)processCount);
-    debug_print("\n");  
 }
+
 
 static void tlbExceptionHandler(void) {
     passUpOrDie(PGFAULTEXCEPT);
@@ -168,18 +170,18 @@ void exceptionHandler(void) {
     /* INTERRUPT */
     if (cause & 0x80000000) {
         interruptHandler();
-        return;    // NON PANIC
+        return;   // NON PANIC
     }
     /* SYS/BREAKPOINT */
     else if (excCode == 8 || excCode == 11) {
         savedState->pc_epc += WORDLEN;
         syscallHandler(savedState);
-        return;    // NON PANIC
+        return;   // NON PANIC
     }
     /* TLB */
     else if (excCode == 12 || excCode == 13 || excCode == 15) {
         tlbExceptionHandler();
-        return;    // NON PANIC
+        return;
     }
     /* ADDRESS/BUS ERROR */
     else if (excCode == 1 || excCode == 5 || excCode == 7) {
@@ -190,14 +192,15 @@ void exceptionHandler(void) {
         } else {
             tlbExceptionHandler();
         }
-        return;    // NON PANIC
+        return;
     }
     /* altro → program trap */
     else {
         programTrapHandler();
-        return;    // NON PANIC
+        return;
     }
 }
+
 
 
 /* syscall handler: pc_epc già avanzato in exceptionHandler */
@@ -338,15 +341,22 @@ static void syscallHandler(state_t *savedState) {
                         devSems[semIdx]--;
                         blockCurrentProcess(&devSems[semIdx]);
                     } else {
+                        unsigned int status = devBase[2];   // TRANSM_STATUS
                         *commandAddr = commandValue;
-                        devBase[3] = 1;
+                        devBase[3] = 1;                     // ACK
+                        savedState->reg_a0 = status;        // <-- RESTITUISCI LO STATUS
+                        LDST(&currentProcess->p_s);         // <-- TORNA AL CHIAMANTE
                     }
+
                 } else {
                     if (!(devBase[1] & 0x1)) {
                         devSems[semIdx]--;
                         blockCurrentProcess(&devSems[semIdx]);
                     } else {
-                        devBase[1] = 1;
+                        unsigned int status = devBase[0];   // RECV_STATUS
+                        devBase[1] = 1;                     // ACK
+                        savedState->reg_a0 = status;
+                        LDST(&currentProcess->p_s);
                     }
                 }
             } else {

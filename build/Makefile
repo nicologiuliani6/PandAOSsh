@@ -273,30 +273,6 @@ phase1/pcb.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase1/pcb.c.s
 .PHONY : phase1/pcb.c.s
 
-phase2/debug.o: phase2/debug.c.o
-.PHONY : phase2/debug.o
-
-# target to build an object file
-phase2/debug.c.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/debug.c.o
-.PHONY : phase2/debug.c.o
-
-phase2/debug.i: phase2/debug.c.i
-.PHONY : phase2/debug.i
-
-# target to preprocess a source file
-phase2/debug.c.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/debug.c.i
-.PHONY : phase2/debug.c.i
-
-phase2/debug.s: phase2/debug.c.s
-.PHONY : phase2/debug.s
-
-# target to generate assembly for a file
-phase2/debug.c.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/debug.c.s
-.PHONY : phase2/debug.c.s
-
 phase2/exceptions.o: phase2/exceptions.c.o
 .PHONY : phase2/exceptions.o
 
@@ -459,9 +435,6 @@ help:
 	@echo "... phase1/pcb.o"
 	@echo "... phase1/pcb.i"
 	@echo "... phase1/pcb.s"
-	@echo "... phase2/debug.o"
-	@echo "... phase2/debug.i"
-	@echo "... phase2/debug.s"
 	@echo "... phase2/exceptions.o"
 	@echo "... phase2/exceptions.i"
 	@echo "... phase2/exceptions.s"
