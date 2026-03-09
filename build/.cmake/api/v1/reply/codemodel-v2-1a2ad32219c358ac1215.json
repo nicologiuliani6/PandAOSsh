@@ -1,0 +1,87 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"jsonFile" : "directory-.-f5ebdc15457944623624.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.25"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3
+					]
+				}
+			],
+			"name" : "",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "MultiPandOS",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "MultiPandOS_phase1::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-MultiPandOS_phase1-0f07b2d750b2f5b50f50.json",
+					"name" : "MultiPandOS_phase1",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "MultiPandOS_phase2::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-MultiPandOS_phase2-bea7e5b4bde806176c9e.json",
+					"name" : "MultiPandOS_phase2",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "phase1::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-phase1-bef90d4e1eb45cb94e02.json",
+					"name" : "phase1",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "phase2::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-phase2-48e8f65304fcf37c8123.json",
+					"name" : "phase2",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/nico/Desktop/PandAOSsh/build",
+		"source" : "/home/nico/Desktop/PandAOSsh"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 7
+	}
+}

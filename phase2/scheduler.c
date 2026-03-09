@@ -10,7 +10,6 @@
 #include "./headers/globals.h"
 #include "debug.h"
 
-#define DEBUG_SCHED 1
 
 #if DEBUG_SCHED
 #define SDBG(msg)           debug_print(msg)

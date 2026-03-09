@@ -20,7 +20,6 @@ cpu_t            startTOD;
 pcb_t           *activeProcs[MAXPROC];
 
 
-#define DEBUG_INIT 1
 
 #if DEBUG_INIT
 #define IDBG(msg)           debug_print(msg)

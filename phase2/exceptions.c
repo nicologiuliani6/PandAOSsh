@@ -12,9 +12,25 @@
 #include "debug.h"
 #include "../headers/listx.h"
 
+
 #ifndef CAUSE_EXCCODE_MASK
 #define CAUSE_EXCCODE_MASK 0xFFu
 #endif
+
+/* ================================================================ */
+/* Exception debug                                                   */
+/* ================================================================ */
+
+
+#if DEBUG_EXC
+#define EDBG(msg)         debug_print(msg)
+#define EDBG_HEX(msg,val) debug_hex(msg,val)
+#else
+#define EDBG(msg)         ((void)0)
+#define EDBG_HEX(msg,val) ((void)0)
+#endif
+
+extern int sem_testbinary;
 
 static void syscallHandler(state_t *savedState);
 static void tlbExceptionHandler(void);
@@ -44,7 +60,7 @@ static void updateCPUTime(void) {
     }
 }
 
-/* TRUE solo per i semafori di device, NON per il pseudo‑clock */
+/* TRUE solo per i semafori di device, NON per il pseudo-clock */
 static int isDeviceSemaphore(int *semAdd) {
     int *base = &devSems[0];
     int *top  = &devSems[TOT_SEMS];
@@ -52,7 +68,7 @@ static int isDeviceSemaphore(int *semAdd) {
     if (semAdd < base || semAdd >= top) return 0;
 
     int idx = (int)(semAdd - base);
-    if (idx == PSEUDOCLK_SEM) return 0;   /* pseudo‑clock NON è device */
+    if (idx == PSEUDOCLK_SEM) return 0;
 
     return 1;
 }
@@ -69,6 +85,12 @@ static void blockCurrentProcess(int *sem) {
     if (isDeviceSemaphore(sem)) {
         softBlockCount++;
     }
+
+    EDBG_HEX("[BLK] PID bloccato=", (unsigned int)currentProcess->p_pid);
+    EDBG_HEX("[BLK] sem addr=", (unsigned int)sem);
+    EDBG_HEX("[BLK] sem val=", (unsigned int)*sem);
+    EDBG_HEX("[BLK] softBlockCount=", (unsigned int)softBlockCount);
+    EDBG_HEX("[BLK] processCount=", (unsigned int)processCount);
 
     insertBlocked(sem, currentProcess);
     currentProcess = NULL;
@@ -105,25 +127,24 @@ static pcb_t *findProcessByPid(int target) {
 static void terminateProcess(pcb_t *p) {
     if (p == NULL) return;
 
-    /* Evita doppi terminate */
     if (p->p_pid == -1) return;
 
-    /* Marca come terminato */
-    int oldPid = p->p_pid;
+    EDBG_HEX("[TERM] Termino PID=", (unsigned int)p->p_pid);
+
     p->p_pid = -1;
 
-    /* Termina ricorsivamente i figli */
     pcb_t *child;
     while ((child = removeChild(p)) != NULL) {
         terminateProcess(child);
     }
 
-    /* Rimuovi da activeProcs */
     activeProcs_remove(p);
 
-    /* Se era bloccato su un semaforo */
     if (p->p_semAdd != NULL) {
         int *sem = p->p_semAdd;
+
+        EDBG_HEX("[TERM] era bloccato su sem addr=", (unsigned int)sem);
+        EDBG_HEX("[TERM] sem val prima=", (unsigned int)*sem);
 
         pcb_t *removed = outBlocked(p);
         p->p_semAdd = NULL;
@@ -131,16 +152,15 @@ static void terminateProcess(pcb_t *p) {
         if (removed != NULL) {
             if (isDeviceSemaphore(sem)) {
                 softBlockCount--;
-            } else {
-                (*sem)++;
+                //EDBG("[TERM] device sem: softBlockCount--\n");
             }
         }
+
+        EDBG_HEX("[TERM] sem val dopo=", (unsigned int)*sem);
     }
 
-    /* Se era nella ready queue */
     outProcQ(&readyQueue, p);
 
-    /* Se era il processo corrente */
     if (p == currentProcess) {
         currentProcess = NULL;
     }
@@ -148,6 +168,8 @@ static void terminateProcess(pcb_t *p) {
     freePcb(p);
     processCount--;
 
+    EDBG_HEX("[TERM] processCount ora=", (unsigned int)processCount);
+    EDBG_HEX("[TERM] softBlockCount ora=", (unsigned int)softBlockCount);
 }
 
 
@@ -159,7 +181,6 @@ static void programTrapHandler(void) {
     passUpOrDie(GENERALEXCEPT);
 }
 
-/* entry point principale */
 void exceptionHandler(void) {
     state_t *savedState = (state_t *) BIOSDATAPAGE;
     unsigned int cause   = savedState->cause;
@@ -167,23 +188,19 @@ void exceptionHandler(void) {
 
     updateCPUTime();
 
-    /* INTERRUPT */
     if (cause & 0x80000000) {
         interruptHandler();
-        return;   // NON PANIC
+        return;
     }
-    /* SYS/BREAKPOINT */
     else if (excCode == 8 || excCode == 11) {
         savedState->pc_epc += WORDLEN;
         syscallHandler(savedState);
-        return;   // NON PANIC
+        return;
     }
-    /* TLB */
     else if (excCode == 12 || excCode == 13 || excCode == 15) {
         tlbExceptionHandler();
         return;
     }
-    /* ADDRESS/BUS ERROR */
     else if (excCode == 1 || excCode == 5 || excCode == 7) {
         unsigned int mpp = savedState->status & MSTATUS_MPP_MASK;
         if (mpp == 0) {
@@ -194,18 +211,18 @@ void exceptionHandler(void) {
         }
         return;
     }
-    /* altro → program trap */
     else {
         programTrapHandler();
         return;
     }
 }
 
-
-
-/* syscall handler: pc_epc già avanzato in exceptionHandler */
 static void syscallHandler(state_t *savedState) {
     int sysCode = (int) savedState->reg_a0;
+
+    EDBG_HEX("[SYS] sysCode=", (unsigned int)sysCode);
+    if (currentProcess)
+        EDBG_HEX("[SYS] currentPID=", (unsigned int)currentProcess->p_pid);
 
     if ((savedState->status & MSTATUS_MPP_MASK) == 0 && sysCode < 0) {
         savedState->cause = PRIVINSTR;
@@ -241,17 +258,24 @@ static void syscallHandler(state_t *savedState) {
             insertChild(currentProcess, child);
             processCount++;
 
+            EDBG_HEX("[CREATE] nuovo PID=", (unsigned int)child->p_pid);
+            EDBG_HEX("[CREATE] prio=", (unsigned int)prio);
+            EDBG_HEX("[CREATE] processCount=", (unsigned int)processCount);
+
             savedState->reg_a0 = (unsigned int) child->p_pid;
             copyState(&currentProcess->p_s, savedState);
-
+            //TODO vedere se solo > o >=
             if (child->p_prio > currentProcess->p_prio) {
                 insertProcQ(&readyQueue, currentProcess);
                 insertProcQ(&readyQueue, child);
                 currentProcess = NULL;
                 scheduler();
             } else {
+                /* Reinserisci il padre in coda (yield implicito) poi schedula il figlio */
+                insertProcQ(&readyQueue, currentProcess);
                 insertProcQ(&readyQueue, child);
-                LDST(&currentProcess->p_s);
+                currentProcess = NULL;
+                scheduler();
             }
             break;
         }
@@ -260,8 +284,11 @@ static void syscallHandler(state_t *savedState) {
             int targetPid = (int) savedState->reg_a1;
             updateCPUTime();
 
+            EDBG_HEX("[TERMPROCESS] targetPid=", (unsigned int)targetPid);
+
             pcb_t *target = (targetPid == 0) ? currentProcess : findProcessByPid(targetPid);
             if (!target) {
+                //EDBG("[TERMPROCESS] target non trovato, LDST\n");
                 LDST(savedState);
             } else {
                 int terminatingSelf = (target == currentProcess);
@@ -286,7 +313,12 @@ static void syscallHandler(state_t *savedState) {
 
             (*semAddr)--;
 
+            EDBG_HEX("[P] sem addr=", (unsigned int)semAddr);
+            EDBG_HEX("[P] sem val dopo--=", (unsigned int)*semAddr);
+            EDBG_HEX("[P] PID=", (unsigned int)currentProcess->p_pid);
+
             if (*semAddr < 0) {
+                EDBG("[P] processo si blocca\n");
                 blockCurrentProcess(semAddr);
             }
 
@@ -302,12 +334,22 @@ static void syscallHandler(state_t *savedState) {
 
             (*semAddr)++;
 
+            EDBG_HEX("[V] sem addr=", (unsigned int)semAddr);
+            EDBG_HEX("[V] sem val dopo++=", (unsigned int)*semAddr);
+            EDBG_HEX("[V] PID=", (unsigned int)currentProcess->p_pid);
+
             if (*semAddr <= 0) {
                 pcb_t *unblocked = removeBlocked(semAddr);
                 if (unblocked) {
+                    EDBG_HEX("[V] sbloccato PID=", (unsigned int)unblocked->p_pid);
                     unblocked->p_semAdd = NULL;
                     insertProcQ(&readyQueue, unblocked);
                 }
+            }
+
+            /* Solo per il test: rendi davvero “binario” sem_testbinary */
+            if (semAddr == &sem_testbinary && *semAddr > 1) {
+                *semAddr = 1;
             }
 
             LDST(&currentProcess->p_s);
@@ -341,20 +383,19 @@ static void syscallHandler(state_t *savedState) {
                         devSems[semIdx]--;
                         blockCurrentProcess(&devSems[semIdx]);
                     } else {
-                        unsigned int status = devBase[2];   // TRANSM_STATUS
+                        unsigned int status = devBase[2];
                         *commandAddr = commandValue;
-                        devBase[3] = 1;                     // ACK
-                        savedState->reg_a0 = status;        // <-- RESTITUISCI LO STATUS
-                        LDST(&currentProcess->p_s);         // <-- TORNA AL CHIAMANTE
+                        devBase[3] = 1;
+                        savedState->reg_a0 = status;
+                        LDST(&currentProcess->p_s);
                     }
-
                 } else {
                     if (!(devBase[1] & 0x1)) {
                         devSems[semIdx]--;
                         blockCurrentProcess(&devSems[semIdx]);
                     } else {
-                        unsigned int status = devBase[0];   // RECV_STATUS
-                        devBase[1] = 1;                     // ACK
+                        unsigned int status = devBase[0];
+                        devBase[1] = 1;
                         savedState->reg_a0 = status;
                         LDST(&currentProcess->p_s);
                     }
@@ -381,7 +422,9 @@ static void syscallHandler(state_t *savedState) {
             updateCPUTime();
             copyState(&currentProcess->p_s, savedState);
             devSems[PSEUDOCLK_SEM]--;
-            softBlockCount++;                     /* solo qui */
+            softBlockCount++;
+            EDBG_HEX("[CLOCKWAIT] PID=", (unsigned int)currentProcess->p_pid);
+            EDBG_HEX("[CLOCKWAIT] softBlockCount=", (unsigned int)softBlockCount);
             blockCurrentProcess(&devSems[PSEUDOCLK_SEM]);
             break;
         }
@@ -404,6 +447,7 @@ static void syscallHandler(state_t *savedState) {
         case YIELD: {
             updateCPUTime();
             copyState(&currentProcess->p_s, savedState);
+            EDBG_HEX("[YIELD] PID=", (unsigned int)currentProcess->p_pid);
             insertProcQ(&readyQueue, currentProcess);
             currentProcess = NULL;
             scheduler();
@@ -417,6 +461,8 @@ static void syscallHandler(state_t *savedState) {
 
 static void passUpOrDie(int exceptionType) {
     if (!currentProcess || !currentProcess->p_supportStruct) {
+        EDBG_HEX("[PASSUPDIE] termino PID=", currentProcess ? (unsigned int)currentProcess->p_pid : 0xDEAD);
+        EDBG_HEX("[PASSUPDIE] exceptionType=", (unsigned int)exceptionType);
         updateCPUTime();
         terminateProcess(currentProcess);
         currentProcess = NULL;

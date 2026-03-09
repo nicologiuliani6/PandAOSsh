@@ -21,7 +21,6 @@ extern void scheduler(void);
 /* Interrupt debug                                                  */
 /* ================================================================ */
 
-#define DEBUG_INT 0
 
 #if DEBUG_INT
 #define IDBG(msg)           debug_print(msg)
@@ -80,7 +79,7 @@ void interruptHandler(void) {
     startTOD = now;
 
     /* Optional debug */
-    IDBG("\n[INT] ===== Interrupt received =====\n");
+    IDBG("[INT] ===== Interrupt received =====\n");
     IDBG_HEX("[INT] CAUSE=", cause);
     IDBG_HEX("[INT] excCode=", excCode);
 
@@ -181,7 +180,7 @@ void interruptHandler(void) {
 
                         unblocked->p_s.reg_a0 = savedStatus;
                         unblocked->p_semAdd   = NULL;
-                        insertProcQ(&readyQueue, unblocked);
+                        list_add_tail(&unblocked->p_list, &readyQueue);  // ← era insertProcQ                        
                         softBlockCount--;
                     }
                 }

@@ -1,12 +1,16 @@
 #ifndef DEBUG_H
 #define DEBUG_H
 
-#define DELAY() for (volatile int i = 0; i < 60; i++)
+#define DEBUG_INIT 0
+#define DEBUG_SCHED 0
+#define DEBUG_EXC 0
+#define DEBUG_INT 0
+
 
 #define DEBUG_ENABLED 1
 
 #if DEBUG_ENABLED
-
+#define DELAY() for (volatile int i = 0; i < 60; i++)
 static inline void debug_print(const char *msg) {
     unsigned int *command = (unsigned int *)(0x10000254 + 3*4);
     while (*msg != '\0') {
@@ -15,7 +19,6 @@ static inline void debug_print(const char *msg) {
         msg++;
     }
 }
-
 static inline void debug_hex(const char *label, unsigned int val) {
     unsigned int *command = (unsigned int *)(0x10000254 + 3*4);
     const char *p = label;
