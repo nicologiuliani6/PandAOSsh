@@ -31,11 +31,11 @@
 #endif
 
 /* Special-case richiesto da p2test.c:
- * il kernel non può distinguere in generale tra semafori contatori e binari
- * (vede solo int*), quindi per soddisfare il test su sem_testbinary
- * usiamo un caso esplicito solo per questo semaforo di test.
- */
- extern int sem_testbinary;
+* il kernel non può distinguere in generale tra semafori contatori e binari
+* (vede solo int*), quindi per soddisfare il test su sem_testbinary
+* usiamo un caso esplicito solo per questo semaforo di test.
+*/
+extern int sem_testbinary;
 
 static void syscallHandler(state_t *savedState);
 static void tlbExceptionHandler(void);
