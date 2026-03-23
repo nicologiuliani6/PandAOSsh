@@ -54,7 +54,7 @@ static void copyState(state_t *dst, state_t *src) {
 #define TERM_RECV_COMMAND(base)   ((base)[1])
 #define TERM_TRANSM_STATUS(base)  ((base)[2])
 #define TERM_TRANSM_COMMAND(base) ((base)[3])
-
+/* helper per device con priorita maggiore*/
 static int getHighestPriorityDevice(unsigned int bitmap) {
     for (int i = 0; i < 8; i++) {
         if (bitmap & (1u << i)) return i;
@@ -78,14 +78,11 @@ void interruptHandler(void) {
     }
     startTOD = now;
 
-    /* Optional debug */
     IDBG("[INT] ===== Interrupt received =====\n");
     IDBG_HEX("[INT] CAUSE=", cause);
     IDBG_HEX("[INT] excCode=", excCode);
 
-    /* ================================================================ */
     /* PLT interrupt (excCode == 7)                                     */
-    /* ================================================================ */
     if (excCode == 7u) {
 
         /* Ack/disarm PLT */
@@ -108,9 +105,7 @@ void interruptHandler(void) {
         return;
     }
 
-    /* ================================================================ */
     /* Interval timer (pseudo-clock) (excCode == 3)                     */
-    /* ================================================================ */
     if (excCode == 3u) {
 
         /* Ack interval timer */
@@ -136,12 +131,10 @@ void interruptHandler(void) {
         return;
     }
 
-    /* ================================================================ */
-    /* Device interrupts: excCode 17..21 => lines 3..7                  */
-    /* ================================================================ */
+    /* Device interrupts: excCode 17..21            */
     if (excCode >= 17u && excCode <= 21u) {
 
-        int intLineNo = (int)(excCode - 14u); /* 17->3 ... 21->7 */
+        int intLineNo = (int)(excCode - 14u); 
         unsigned int bitmap = INT_BITMAP(intLineNo);
         int devNo = getHighestPriorityDevice(bitmap);
 
@@ -180,7 +173,7 @@ void interruptHandler(void) {
 
                         unblocked->p_s.reg_a0 = savedStatus;
                         unblocked->p_semAdd   = NULL;
-                        list_add_tail(&unblocked->p_list, &readyQueue);  // ← era insertProcQ                        
+                        list_add_tail(&unblocked->p_list, &readyQueue);                          
                         softBlockCount--;
                     }
                 }
@@ -236,9 +229,7 @@ void interruptHandler(void) {
         return;
     }
 
-    /* ================================================================ */
     /* Unknown interrupt code: just resume/schedule                      */
-    /* ================================================================ */
     if (currentProcess != NULL) LDST(savedState);
     else scheduler();
 }

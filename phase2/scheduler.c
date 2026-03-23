@@ -21,20 +21,20 @@
 
 void scheduler(void) { 
 
-    /* 1. Se c’è un processo ready → eseguilo */
+    /* 1. Se c’è un processo ready lo eseguiamo */
     if (!emptyProcQ(&readyQueue)) {
         currentProcess = removeProcQ(&readyQueue);
         setTIMER(TIMESLICE * (*((cpu_t *) TIMESCALEADDR)));
         LDST(&currentProcess->p_s);
     }
 
-    /* 2. Se non ci sono più processi → HALT */
+    /* 2. Se non ci sono più processi HALT del sistema */
     if (processCount == 0) {
         SDBG("All processes completed!\n");
         HALT();
     }
 
-    /* 3. Se ci sono processi soft-blocked → WAIT */
+    /* 3. Se ci sono processi soft-blocked facciamo WAIT */
     if (softBlockCount > 0) {
         currentProcess = NULL;
 
@@ -54,7 +54,7 @@ void scheduler(void) {
                 LDST(&currentProcess->p_s);
             }
         }
-        // se non trovi nulla → vero deadlock
+        // se non troviamo nulla siamo in DEADLOCK
         SDBG("[DEADLOCK] No ready processes and no soft-blocked processes\n");
         HALT();
     }

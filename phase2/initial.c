@@ -31,7 +31,8 @@ pcb_t           *activeProcs[MAXPROC];
 
 int main(void) {
     IDBG("[INIT] Inizializzazione in corso...\n");
-    /* 1. Pass Up Vector */
+    /* 1. Il Nucleus avrà popolato il Pass Up Vector delle CPU con l’indirizzo del gestore delle 
+    eccezioni del Nucleus e con l’indirizzo della pagina di stack del Nucleus */
     passupvector_t *passUpVec = (passupvector_t *) PASSUPVECTOR;
     memaddr ramtop;
     RAMTOP(ramtop);
@@ -46,7 +47,7 @@ int main(void) {
     initPcbs();
     initASL();
 
-    /* 3. Variabili globali */
+    /* 3. definizione delle variabili globali */
     IDBG("[INIT] Inizializzazione variabili globali...\n");
     processCount   = 0;
     softBlockCount = 0;
@@ -72,7 +73,7 @@ int main(void) {
 
     testPcb->p_s.status      = MSTATUS_MIE_MASK | MSTATUS_MPIE_MASK | MSTATUS_MPP_M;
     testPcb->p_s.mie         = MIE_ALL;
-    testPcb->p_s.reg_sp      = ramtop - (2 * PAGESIZE); /* FIX: distanza sicura da entrambi gli handler stack */
+    testPcb->p_s.reg_sp      = ramtop - (2 * PAGESIZE);
     testPcb->p_s.pc_epc      = (memaddr) test;
     testPcb->p_parent        = NULL;
     testPcb->p_semAdd        = NULL;
@@ -84,6 +85,7 @@ int main(void) {
     insertProcQ(&readyQueue, testPcb);
     processCount = 1;
     IDBG("[INIT] Inizializzazione completata!\n");
+    
     /* 6. Scheduler */
     IDBG("[INIT] Avvio scheduler...\n");
     scheduler();

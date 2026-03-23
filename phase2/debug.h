@@ -1,12 +1,15 @@
 #ifndef DEBUG_H
 #define DEBUG_H
 
+
+/* mettere 1 per abilitare i print locali di debug
+*/
 #define DEBUG_INIT 0
 #define DEBUG_SCHED 0
 #define DEBUG_EXC 0
 #define DEBUG_INT 0
 
-
+/* mettere 0 per disattivare globalmente tutti i print*/
 #define DEBUG_ENABLED 1
 
 #if DEBUG_ENABLED

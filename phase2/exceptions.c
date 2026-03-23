@@ -17,11 +17,6 @@
 #define CAUSE_EXCCODE_MASK 0xFFu
 #endif
 
-/* ================================================================ */
-/* Exception debug                                                   */
-/* ================================================================ */
-
-
 #if DEBUG_EXC
 #define EDBG(msg)         debug_print(msg)
 #define EDBG_HEX(msg,val) debug_hex(msg,val)
@@ -49,13 +44,14 @@ static void copyState(state_t *dst, state_t *src);
 extern void scheduler(void);
 extern void interruptHandler(void);
 
+/*copia dello stato da dst su src*/
 static void copyState(state_t *dst, state_t *src) {
     unsigned int *d = (unsigned int *) dst;
     unsigned int *s = (unsigned int *) src;
     for (int i = 0; i < STATE_T_SIZE_IN_BYTES / WORDLEN; i++)
         d[i] = s[i];
 }
-
+/* traccia del tempo di cpu del singolo processo*/
 static void updateCPUTime(void) {
     if (currentProcess) {
         cpu_t now;
@@ -65,7 +61,7 @@ static void updateCPUTime(void) {
     }
 }
 
-/* TRUE solo per i semafori di device, NON per il pseudo-clock */
+/* TRUE solo per i semafori di decopyStatevice, NON per il pseudo-clock */
 static int isDeviceSemaphore(int *semAdd) {
     int *base = &devSems[0];
     int *top  = &devSems[TOT_SEMS];
@@ -77,7 +73,7 @@ static int isDeviceSemaphore(int *semAdd) {
 
     return 1;
 }
-
+/*funzione che permetta al kernel di bloccare un processo perche aspetta un evento*/
 static void blockCurrentProcess(int *sem) {
     if (!currentProcess) PANIC();
 
@@ -101,7 +97,7 @@ static void blockCurrentProcess(int *sem) {
     currentProcess = NULL;
     scheduler();
 }
-
+/* aggiunge processo a ready queue*/
 static void activeProcs_add(pcb_t *p) {
     for (int i = 0; i < MAXPROC; i++) {
         if (activeProcs[i] == NULL) {
@@ -111,7 +107,7 @@ static void activeProcs_add(pcb_t *p) {
     }
     PANIC();
 }
-
+/* rimuove processo permanentemente dal SO*/
 static void activeProcs_remove(pcb_t *p) {
     for (int i = 0; i < MAXPROC; i++) {
         if (activeProcs[i] == p) {
@@ -120,7 +116,7 @@ static void activeProcs_remove(pcb_t *p) {
         }
     }
 }
-
+/* cerca un processo dato pid*/
 static pcb_t *findProcessByPid(int target) {
     for (int i = 0; i < MAXPROC; i++) {
         if (activeProcs[i] != NULL && activeProcs[i]->p_pid == target)
@@ -128,7 +124,7 @@ static pcb_t *findProcessByPid(int target) {
     }
     return NULL;
 }
-
+/* syscall sys2: uccide padre e figli*/
 static void terminateProcess(pcb_t *p) {
     if (p == NULL) return;
 
@@ -176,36 +172,39 @@ static void terminateProcess(pcb_t *p) {
     EDBG_HEX("[TERM] processCount ora=", (unsigned int)processCount);
     EDBG_HEX("[TERM] softBlockCount ora=", (unsigned int)softBlockCount);
 }
-
-
+/* gestione del TLB su addr. non valido (tlb miss)*/
 static void tlbExceptionHandler(void) {
     passUpOrDie(PGFAULTEXCEPT);
 }
-
+/* handler eccezioni generali (non tlb miss e syscall)*/
 static void programTrapHandler(void) {
     passUpOrDie(GENERALEXCEPT);
 }
-
+/* punto di ingresso di tutte le eccezioni del kernel, smista gli errori*/
 void exceptionHandler(void) {
     state_t *savedState = (state_t *) BIOSDATAPAGE;
     unsigned int cause   = savedState->cause;
     unsigned int excCode = cause & CAUSE_EXCCODE_MASK;
 
     updateCPUTime();
-
+    /* interrupt*/
     if (cause & 0x80000000) {
         interruptHandler();
         return;
     }
+    /* handler delle chiamate di sistema*/
     else if (excCode == 8 || excCode == 11) {
+        /* aumentiamo di 4 il PC*/
         savedState->pc_epc += WORDLEN;
         syscallHandler(savedState);
         return;
     }
+    /* tlb*/
     else if (excCode == 12 || excCode == 13 || excCode == 15) {
         tlbExceptionHandler();
         return;
     }
+    /*restanti*/
     else if (excCode == 1 || excCode == 5 || excCode == 7) {
         unsigned int mpp = savedState->status & MSTATUS_MPP_MASK;
         if (mpp == 0) {
@@ -221,7 +220,7 @@ void exceptionHandler(void) {
         return;
     }
 }
-
+/* gestisce le chiamate di sistema (quando un proc. ha bisogno di qualcosa dal kernel)*/
 static void syscallHandler(state_t *savedState) {
     int sysCode = (int) savedState->reg_a0;
 
@@ -239,7 +238,7 @@ static void syscallHandler(state_t *savedState) {
         passUpOrDie(GENERALEXCEPT);
         return;
     }
-
+    /* implementazione delle varie syscall*/
     switch (sysCode) {
         case CREATEPROCESS: {
             state_t   *newState = (state_t *) savedState->reg_a1;
@@ -269,7 +268,6 @@ static void syscallHandler(state_t *savedState) {
 
             savedState->reg_a0 = (unsigned int) child->p_pid;
             copyState(&currentProcess->p_s, savedState);
-            //TODO vedere se solo > o >=
             if (child->p_prio > currentProcess->p_prio) {
                 insertProcQ(&readyQueue, currentProcess);
                 insertProcQ(&readyQueue, child);
@@ -458,12 +456,12 @@ static void syscallHandler(state_t *savedState) {
             scheduler();
             break;
         }
-
+        /* eccezioni restanti*/
         default:
             passUpOrDie(GENERALEXCEPT);
     }
 }
-
+/* implementa meccaiscmo per passupvector*/
 static void passUpOrDie(int exceptionType) {
     if (!currentProcess || !currentProcess->p_supportStruct) {
         EDBG_HEX("[PASSUPDIE] termino PID=", currentProcess ? (unsigned int)currentProcess->p_pid : 0xDEAD);
