@@ -57,7 +57,7 @@ All'interno della directory del progetto sono forniti:
 - il materiale di supporto;
 - i programmi di test per la verifica dell'implementazione (`p1test.c`, `p2test.c`).
 
-Il progetto è pensato per essere compilato ed eseguito in ambiente **GNU/Linux**.
+Il progetto è pensato per essere compilato ed eseguito in ambiente **GNU/Linux** (official support Debian/Fedora).
 
 ---
 
@@ -93,9 +93,4 @@ Genera `build/MultiPandOS.core.uriscv`. Aprire **µRISC-V**, caricare **config_m
 
 > **Nota:** entrambi i target sovrascrivono `MultiPandOS.core.uriscv` — il file caricato automaticamente da `config_machine.json` — quindi non è necessario modificare nulla nella configurazione dell'emulatore.
 
-> **Importante (Phase 2):** assicurarsi che il campo **TLB Floor Address** in `config_machine.json` sia impostato a qualsiasi valore diverso da `VM_OFF`. Nel file fornito è già impostato a `0xffffffff`, quindi va bene così.
 
-Il test ha successo se sul terminale compare il messaggio finale:
-```
-System halted
-```cd
