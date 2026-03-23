@@ -5,7 +5,7 @@
 
 ## 1. Introduzione
 
-Il presente documento descrive le principali **scelte implementative** adottate nei moduli della Phase 2 del nucleo (Nucleus), motivandole in relazione ai requisiti del progetto e alle specifiche µRISCV.
+Il presente documento descrive le principali **scelte implementative** adottate nei moduli della Phase 2 del nucleo (Nucleus), motivandole in relazione ai requisiti del progetto e alle specifiche µRISCV. Dove il codice si discosta dalla specifica, la deviazione è segnalata esplicitamente e giustificata.
 
 La Phase 2 realizza il kernel vero e proprio: inizializzazione del sistema, scheduling dei processi, gestione delle eccezioni (syscall, trap, TLB) e gestione degli interrupt. Tutte le scelte mirano a garantire correttezza, semplicità e comportamento deterministico, operando al di sotto del livello utente senza alcuna allocazione dinamica.
 
@@ -15,7 +15,7 @@ La Phase 2 realizza il kernel vero e proprio: inizializzazione del sistema, sche
 
 ### 2.1 Configurazione del Pass Up Vector
 
-Il Pass Up Vector viene configurato esplicitamente con gli indirizzi del gestore delle eccezioni (`exceptionHandler`) e del gestore dei TLB miss (`uTLB_RefillHandler`). I due stack pointer associati sono posti rispettivamente alla sommità della RAM (`ramtop`) e a un frame al di sotto (`ramtop − PAGESIZE`), garantendo che i due gestori operino su aree di stack separate e non si sovrascrivano a vicenda.
+Questa scelta è stata adottata dopo aver riscontrato collisioni di stack durante i test: con un unico indirizzo fisso (`KERNELSTACK`) i due gestori potevano sovrascriversi reciprocamente in caso di eccezioni annidate. Usando `ramtop` e `ramtop − PAGESIZE` si riservano i due frame più alti della RAM esclusivamente agli handler del kernel, garantendo isolamento. Il processo di test usa `ramtop − 2 × PAGESIZE` come stack, evitando sovrapposizioni con entrambi i frame riservati.
 
 ### 2.2 Lettura del TOD invece dell'azzeramento
 
@@ -31,10 +31,13 @@ Viene creato un singolo processo `test` con priorità bassa (`PROCESS_PRIO_LOW`)
 
 ### 2.5 Tracciamento dei processi attivi (`activeProcs`)
 
-Accanto alla ready queue, viene mantenuto un array `activeProcs` di dimensione `MAXPROC` che contiene i puntatori a tutti i processi vivi (ready, running o bloccati). Questa struttura supporta due operazioni fondamentali non gestibili dalla sola ready queue:
+> **Scelta progettuale aggiuntiva rispetto alla specifica**  
+> La specifica non richiede esplicitamente questa struttura. Il suo utilizzo introduce un overhead O(MAXPROC) nelle operazioni di ricerca, inserimento e rimozione, accettabile dato il limite fisso di processi.
 
-- la ricerca di un processo per PID nella syscall `TERMPROCESS` (quando `targetPid ≠ 0`);
-- il rilevamento di deadlock nello scheduler, dove è necessario sapere se esistono processi vivi non in ready queue e non soft-blocked.
+Accanto alla ready queue, viene mantenuto un array `activeProcs` di dimensione `MAXPROC` che contiene i puntatori a tutti i processi vivi (ready, running o bloccati). Questa struttura è necessaria per due operazioni che la sola ready queue non può supportare:
+
+- la **ricerca di un processo per PID** nella syscall `TERMPROCESS` (quando `targetPid ≠ 0`): i processi bloccati non si trovano in ready queue, quindi serve una struttura separata che li includa;
+- il **rilevamento di deadlock** nello scheduler: è necessario sapere se esistono processi vivi non in ready queue e non soft-blocked, condizione non rilevabile tramite i soli contatori globali.
 
 ---
 
@@ -42,7 +45,7 @@ Accanto alla ready queue, viene mantenuto un array `activeProcs` di dimensione `
 
 ### 3.1 Algoritmo di scheduling con priorità e round-robin
 
-Lo scheduler preleva il processo con priorità più alta dalla ready queue tramite `removeProcQ`, che rispetta l'ordinamento per priorità. Ogni processo estratto riceve una time slice configurata via `setTIMER`. Allo scadere della slice (interrupt PLT), il processo corrente viene reinserito in coda e rischedulato.
+Lo scheduler preleva il processo con priorità più alta dalla ready queue tramite `removeProcQ`, che rispetta l'ordinamento per priorità. Ogni processo estratto riceve una time slice pari a `TIMESLICE × TIMESCALE` (vedi §6), caricata nel PLT tramite `setTIMER`. Allo scadere della slice (interrupt PLT), il processo corrente viene reinserito in coda e rischedulato.
 
 Questa politica realizza un round-robin con priorità: processi ad alta priorità vengono sempre preferiti, ma a parità di priorità il tempo CPU è condiviso equamente.
 
@@ -52,11 +55,11 @@ Lo scheduler distingue tre stati del sistema con azioni diverse:
 
 - **Ready queue non vuota**: il primo processo viene estratto ed eseguito con `LDST`.
 - **`processCount == 0`**: tutti i processi sono terminati, il sistema viene arrestato con `HALT`.
-- **`softBlockCount > 0`**: esistono processi bloccati in attesa di interrupt. Il kernel entra in stato di attesa (`WAIT`) con gli interrupt abilitati e il PLT disabilitato (`MIE_ALL & ~MIE_MTIE_MASK`), per non consumare inutilmente cicli CPU.
+- **`softBlockCount > 0`**: esistono processi bloccati in attesa di interrupt. Il kernel entra in stato di attesa (`WAIT`) con tutti gli interrupt abilitati tranne il PLT (`MIE_ALL & ~MIE_MTIE_MASK`, vedi §6), per non consumare inutilmente cicli CPU e per non ricevere un interrupt PLT spurio mentre non c'è nessun processo in esecuzione.
 
 ### 3.3 Rilevamento del deadlock
 
-Se la ready queue è vuota, ci sono processi vivi ma nessuno è soft-blocked, il sistema è in deadlock. Prima di chiamare `PANIC`, lo scheduler tenta di individuare un processo nell'array `activeProcs` (caso difensivo). Se nessun processo viene trovato, la chiamata a `PANIC` segnala esplicitamente la condizione anomala.
+Se la ready queue è vuota, ci sono processi vivi (`processCount > 0`) ma nessuno è soft-blocked (`softBlockCount == 0`), il sistema è in deadlock. Prima di chiamare `PANIC`, lo scheduler tenta di individuare un processo nell'array `activeProcs` (caso difensivo, per gestire eventuali inconsistenze nei contatori). Se nessun processo viene trovato, la chiamata a `PANIC` segnala esplicitamente la condizione anomala.
 
 ---
 
@@ -92,7 +95,7 @@ Invoca la funzione ricorsiva `terminateProcess`, che tramite `removeChild` elimi
 
 Implementano la semantica P/V con contatore negativo. In P, se il valore del semaforo scende sotto zero, il processo viene bloccato con `blockCurrentProcess` (che aggiorna `softBlockCount` solo per semafori di dispositivo reali, non per il pseudo-clock). In V, se il valore rimane ≤ 0, il primo processo in attesa viene rimosso dalla ASL e reinserito nella ready queue.
 
-Un caso speciale è previsto per `sem_testbinary`: dopo un V, se il valore supera 1 viene riportato a 1, emulando la semantica binaria richiesta dal test.
+**Caso speciale `sem_testbinary`**: `p2test.c` esegue due `VERHOGEN` consecutivi sullo stesso semaforo binario (inizializzato a 0) e verifica poi che il valore sia esattamente 1. Un semaforo contatore standard dopo due V varrebbe 2, facendo fallire il controllo. Poiché il kernel non può distinguere in generale semafori binari da semafori contatori (vede solo un `int *`), si è adottato un caso esplicito: se l'indirizzo corrisponde a `&sem_testbinary` e il valore supera 1 dopo un V, viene riportato a 1. Questa soluzione è circoscritta al semaforo di test e non altera il comportamento generale di `VERHOGEN`.
 
 #### `DOIO` (SYS5)
 
@@ -100,7 +103,7 @@ Calcola l'indice del semaforo corrispondente al registro di comando indirizzato,
 
 #### `CLOCKWAIT` (SYS7)
 
-Decrementa il semaforo dello pseudo-clock e incrementa `softBlockCount` prima di bloccare il processo. Questo assicura che lo scheduler entri in stato `WAIT` se tutti i processi pronti si esauriscono prima del prossimo tick del timer.
+Decrementa il semaforo dello pseudo-clock e incrementa `softBlockCount` prima di bloccare il processo. Questo assicura che lo scheduler entri in stato `WAIT` se tutti i processi pronti si esauriscono prima del prossimo tick del timer (ogni `PSECOND`, vedi §6).
 
 ### 4.4 Meccanismo `passUpOrDie`
 
@@ -123,12 +126,12 @@ Separare il controllo di appartenenza ai semafori di dispositivo in una funzione
 `interruptHandler` legge `cause` da `BIOSDATAPAGE` e distingue tre classi di interrupt in base al codice di eccezione:
 
 - `excCode` 7 → PLT (Process Local Timer): quantum scaduto;
-- `excCode` 3 → Interval Timer: tick dello pseudo-clock;
+- `excCode` 3 → Interval Timer: tick dello pseudo-clock (ogni `PSECOND`);
 - `excCode` 17–21 → interrupt di dispositivo (linee hardware 3–7).
 
 ### 5.2 PLT interrupt e preemption
 
-Allo scadere del time slice, il PLT viene disarmato (`setTIMER(NEVER)`), lo stato del processo corrente viene salvato da `BIOSDATAPAGE` nel PCB, e il processo viene reinserito nella ready queue. Lo stato viene aggiornato con il bit `MIE` abilitato per garantire che, alla prossima esecuzione, il processo parta con gli interrupt attivi. Infine si richiama lo scheduler.
+Allo scadere del time slice, il PLT viene disarmato con `setTIMER(NEVER)` (vedi §6) per evitare interrupt spuri durante la fase di scheduling. Lo stato del processo corrente viene salvato da `BIOSDATAPAGE` nel PCB e il processo viene reinserito nella ready queue con il bit `MIE` abilitato, garantendo che alla prossima esecuzione parta con gli interrupt attivi. Infine si richiama lo scheduler.
 
 ### 5.3 Interval Timer e pseudo-clock
 
@@ -148,7 +151,19 @@ Al termine di ogni gestore di interrupt, se `currentProcess` è non NULL viene e
 
 ---
 
-## 6. Considerazioni finali
+## 6. Glossario delle costanti critiche
+
+| Costante | Significato |
+|---|---|
+| `PSECOND` | Periodo dell'Interval Timer (100 ms in tick TOD). Determina la frequenza con cui i processi in `CLOCKWAIT` vengono sbloccati. |
+| `TIMESLICE` | Durata della time slice assegnata a ciascun processo. Viene moltiplicata per `TIMESCALE` (fattore di scala del TOD) per ottenere i tick reali caricati nel PLT. |
+| `NEVER` | Valore massimo di `cpu_t`. Caricato nel PLT per disarmarlo: con un timeout irraggiungibile il timer non scatta mai, evitando interrupt PLT spuri durante lo scheduling. |
+| `MIE_ALL` | Maschera che abilita tutti i sorgenti di interrupt (PLT, Interval Timer, dispositivi). |
+| `MIE_ALL & ~MIE_MTIE_MASK` | Come `MIE_ALL` ma con il bit MTIE (PLT) azzerato. Usato nel `WAIT` per ricevere interrupt di dispositivo e di timer senza ricevere un PLT spurio mentre nessun processo è in esecuzione. |
+
+---
+
+## 7. Considerazioni finali
 
 Le scelte implementative della Phase 2 sono state orientate dai seguenti principi:
 
@@ -157,3 +172,4 @@ Le scelte implementative della Phase 2 sono state orientate dai seguenti princip
 - **Correttezza del `softBlockCount`**: il contatore viene aggiornato simmetricamente in ogni punto di blocco e sblocco, distinguendo i semafori di dispositivo reali dallo pseudo-clock.
 - **Assenza di allocazioni dinamiche**: tutte le strutture dati sono statiche o preallocate dalla Phase 1, garantendo comportamento deterministico.
 - **Delega verso l'alto con `passUpOrDie`**: il nucleo non gestisce eccezioni di competenza dei livelli superiori, ma le delega o termina il processo in modo sicuro.
+- **Deviazioni documentate**: le scelte che si discostano dalla specifica (stack pointer del Pass Up Vector, caso speciale di `sem_testbinary`) sono motivate esplicitamente e circoscritte al minimo indispensabile.
