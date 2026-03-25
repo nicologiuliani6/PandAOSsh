@@ -95,7 +95,6 @@ Invoca la funzione ricorsiva `terminateProcess`, che tramite `removeChild` elimi
 
 Implementano la semantica P/V con contatore negativo. In P, se il valore del semaforo scende sotto zero, il processo viene bloccato con `blockCurrentProcess` (che aggiorna `softBlockCount` solo per semafori di dispositivo reali, non per il pseudo-clock). In V, se il valore rimane ≤ 0, il primo processo in attesa viene rimosso dalla ASL e reinserito nella ready queue.
 
-**Caso speciale `sem_testbinary`**: `p2test.c` esegue due `VERHOGEN` consecutivi sullo stesso semaforo binario (inizializzato a 0) e verifica poi che il valore sia esattamente 1. Un semaforo contatore standard dopo due V varrebbe 2, facendo fallire il controllo. Poiché il kernel non può distinguere in generale semafori binari da semafori contatori (vede solo un `int *`), si è adottato un caso esplicito: se l'indirizzo corrisponde a `&sem_testbinary` e il valore supera 1 dopo un V, viene riportato a 1. Questa soluzione è circoscritta al semaforo di test e non altera il comportamento generale di `VERHOGEN`.
 
 #### `DOIO` (SYS5)
 
