@@ -1,19 +1,19 @@
 /* File: $Id: p2test.c,v 1.1 1998/01/20 09:28:08 morsiani Exp morsiani $ */
 
 /*********************************P2TEST.C*******************************
- *
- *	Test program for the PandosPlus Kernel: phase 2.
- *      v.0.1: March 20, 2022
- *
- *	Produces progress messages on Terminal0.
- *
- *	This is pretty convoluted code, so good luck!
- *
- *		Aborts as soon as an error is detected.
- *
- *      Modified by Michael Goldweber on May 15, 2004
- *		Modified by Michael Goldweber on June 19, 2020
- */
+*
+*	Test program for the PandosPlus Kernel: phase 2.
+*      v.0.1: March 20, 2022
+*
+*	Produces progress messages on Terminal0.
+*
+*	This is pretty convoluted code, so good luck!
+*
+*		Aborts as soon as an error is detected.
+*
+*      Modified by Michael Goldweber on May 15, 2004
+*		Modified by Michael Goldweber on June 19, 2020
+*/
 
 #include "../headers/const.h"
 #include "../headers/types.h"
@@ -80,7 +80,8 @@ int sem_term_mut = 1,              /* for mutual exclusion on terminal */
     sem_endp8               = 0,   /* to signal demise of p8 */
     sem_endcreate[NOLEAVES] = {0}, /* for a p8 leaf to signal its creation */
     sem_blkp8               = 0,   /* to block p8 */
-    sem_blkp9               = 0;   /* to block p9 */
+    sem_blkp9               = 0,   /* to block p9 */
+    sem_testbinary          = 0;   /* to test binary semaphores */
 
 state_t p2state, p3state, p4state, p5state, p6state, p7state, p8rootstate, child1state, child2state, gchild1state,
     gchild2state, gchild3state, gchild4state, p9state, p10state, hp_p1state, hp_p2state;
@@ -267,7 +268,7 @@ void test() {
     p10state.status |= MSTATUS_MIE_MASK | MSTATUS_MPP_M;
     p10state.mie = MIE_ALL;
 
-      /* create process p2 */
+    /* create process p2 */
     p2pid = SYSCALL(CREATEPROCESS, (int)&p2state, PROCESS_PRIO_LOW, (int)NULL); /* start p2     */
 
     print("p2 was started\n");
@@ -420,7 +421,7 @@ void p3() {
     print("p3 - CLOCKWAIT OK\n");
 
     /* now let's check to see if we're really charge for CPU
-       time correctly */
+    time correctly */
     cpu_t1 = SYSCALL(GETTIME, 0, 0, 0);
 
     for (i = 0; i < CLOCKLOOP; i++) {
@@ -617,7 +618,7 @@ void p6() {
     print("p6 starts\n");
 
     SYSCALL(1, 0, 0, 0); /* should cause termination because p6 has no
-           trap vector */
+        trap vector */
 
     print("error: p6 alive after SYS9() with no trap vector\n");
 
@@ -693,6 +694,7 @@ void child2() {
 /*p8leaf -- code for leaf processes*/
 
 void p8leaf1() {
+    SYSCALL(VERHOGEN, (int)&sem_testbinary, 0, 0);
     print("leaf process (1) starts\n");
     SYSCALL(VERHOGEN, (int)&sem_endcreate[0], 0, 0);
     SYSCALL(PASSEREN, (int)&sem_blkp8, 0, 0);
@@ -700,6 +702,7 @@ void p8leaf1() {
 
 
 void p8leaf2() {
+    SYSCALL(VERHOGEN, (int)&sem_testbinary, 0, 0);
     print("leaf process (2) starts\n");
     SYSCALL(VERHOGEN, (int)&sem_endcreate[1], 0, 0);
     SYSCALL(PASSEREN, (int)&sem_blkp8, 0, 0);
@@ -709,6 +712,12 @@ void p8leaf2() {
 void p8leaf3() {
     print("leaf process (3) starts\n");
     SYSCALL(VERHOGEN, (int)&sem_endcreate[2], 0, 0);
+    if (sem_testbinary != 1) {
+        print("Error: binary semaphore value is not 1!\n");
+        PANIC();
+    }
+    SYSCALL(PASSEREN, (int)&sem_testbinary, 0, 0);
+    SYSCALL(PASSEREN, (int)&sem_testbinary, 0, 0);
     SYSCALL(PASSEREN, (int)&sem_blkp8, 0, 0);
 }
 
@@ -746,7 +755,7 @@ void hp_p1() {
     print("hp_p1 starts\n");
 
     for (int i = 0; i < 100; i++) {
-		SYSCALL(YIELD, 0, 0, 0);
+        SYSCALL(YIELD, 0, 0, 0);
     }
 
     print("hp_p1 ends\n");
@@ -759,7 +768,7 @@ void hp_p1() {
 void hp_p2() {
     print("hp_p2 starts\n");
 
-	SYSCALL(YIELD, 0, 0, 0);
+    SYSCALL(YIELD, 0, 0, 0);
 
     print("hp_p2 ends\n");
 
