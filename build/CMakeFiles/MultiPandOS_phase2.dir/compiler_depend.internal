@@ -42,6 +42,7 @@ CMakeFiles/MultiPandOS_phase2.dir/phase2/exceptions.c.o
  /home/nico/Desktop/PandAOSsh/phase2/headers/globals.h
  /home/nico/Desktop/PandAOSsh/phase2/debug.h
  /usr/include/uriscv/const.h
+ /usr/include/uriscv/cpu.h
  /usr/include/uriscv/csr.h
  /usr/include/uriscv/liburiscv.h
  /usr/include/uriscv/types.h

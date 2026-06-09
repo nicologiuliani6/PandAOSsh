@@ -6,7 +6,7 @@ CMakeFiles/MultiPandOS_phase2.dir/phase2/exceptions.c.o: \
  /usr/include/uriscv/types.h \
  /home/nico/Desktop/PandAOSsh/phase2/../headers/./const.h \
  /home/nico/Desktop/PandAOSsh/phase2/../headers/./listx.h \
- /usr/include/uriscv/liburiscv.h \
+ /usr/include/uriscv/liburiscv.h /usr/include/uriscv/cpu.h \
  /home/nico/Desktop/PandAOSsh/phase2/../phase1/headers/pcb.h \
  /home/nico/Desktop/PandAOSsh/phase2/../phase1/headers/../../headers/listx.h \
  /home/nico/Desktop/PandAOSsh/phase2/../phase1/headers/../../headers/types.h \

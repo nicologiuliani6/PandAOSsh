@@ -1,0 +1,28 @@
+# --- Build directory (CMake) ---
+/build/
+
+# --- Oggetti e file di dipendenza ---
+*.o
+*.o.d
+*.d
+*.obj
+
+# --- Output dell'emulatore uRISCV ---
+# term0.uriscv e' il file su cui il terminale 0 scrive l'output a runtime
+term0.uriscv
+term*.uriscv.out
+
+# --- Artefatti di build del kernel ---
+MultiPandOS
+MultiPandOS.core.uriscv
+MultiPandOS.stab.uriscv
+
+# --- Archivi ---
+*.tar.gz
+*.zip
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+*.swp

@@ -16,9 +16,10 @@ p9 starts
 hp_p1 ends
 hp_p2 ends
 second incarnation of p4 starts
-memory management trap
+Bus Error (as expected): Access non-existent memory
 p10 starts
 p4 is OK
+memory management trap
 Correct Support Structure Address
 Address Error (as expected): non-kuseg access w/KU=1
 High level SYS call from kernel mode process
@@ -52,3 +53,4 @@ leaf process (2) starts
 leaf process (3) starts
 leaf process (4) starts
 p1 finishes OK -- TTFN
+System halted 
