@@ -18,6 +18,7 @@ pcb_t           *currentProcess;
 int              devSems[TOT_SEMS];
 cpu_t            startTOD;
 pcb_t           *activeProcs[MAXPROC];
+pcb_t           *yieldedProcess = NULL;
 
 
 
@@ -71,14 +72,12 @@ int main(void) {
     pcb_t *testPcb = allocPcb();
     if (testPcb == NULL) PANIC();
 
+    /* allocPcb azzera già p_parent, p_semAdd, p_supportStruct, p_time e
+     * inizializza le liste: qui impostiamo solo ciò che è specifico. */
     testPcb->p_s.status      = MSTATUS_MIE_MASK | MSTATUS_MPIE_MASK | MSTATUS_MPP_M;
     testPcb->p_s.mie         = MIE_ALL;
     testPcb->p_s.reg_sp      = ramtop - (2 * PAGESIZE);
     testPcb->p_s.pc_epc      = (memaddr) test;
-    testPcb->p_parent        = NULL;
-    testPcb->p_semAdd        = NULL;
-    testPcb->p_supportStruct = NULL;
-    testPcb->p_time          = 0;
     testPcb->p_prio          = PROCESS_PRIO_LOW;
 
     activeProcs[0] = testPcb;

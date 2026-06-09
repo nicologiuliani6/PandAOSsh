@@ -21,6 +21,12 @@ extern struct list_head readyQueue;
 /* Puntatore al processo correntemente in esecuzione */
 extern pcb_t *currentProcess;
 
+/* Processo che ha appena eseguito una SYS YIELD. Lo scheduler lo
+* reinserisce nella ready queue solo DOPO aver dato la precedenza a un
+* eventuale processo pronto di priorità uguale o maggiore: così uno YIELD
+* cede davvero la CPU invece di far ripartire subito lo stesso processo. */
+extern pcb_t *yieldedProcess;
+
 /*
 * Lista globale di tutti i processi vivi (ready + blocked + running).
 * Ogni pcb_t viene aggiunto a questa lista tramite il campo p_list

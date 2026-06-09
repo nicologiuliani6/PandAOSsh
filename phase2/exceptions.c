@@ -5,6 +5,7 @@
 #include "../headers/const.h"
 #include "../headers/types.h"
 #include <uriscv/liburiscv.h>
+#include <uriscv/cpu.h>
 
 #include "../phase1/headers/pcb.h"
 #include "../phase1/headers/asl.h"
@@ -133,6 +134,12 @@ static void terminateProcess(pcb_t *p) {
         terminateProcess(child);
     }
 
+    /* Stacca p dalla lista figli del proprio padre. Senza questo, un
+     * processo che termina da solo (TERMPROCESS su se stesso) resterebbe
+     * agganciato come "figlio fantasma" del padre: alla terminazione del
+     * padre, removeChild continuerebbe a restituirlo all'infinito. */
+    outChild(p);
+
     activeProcs_remove(p);
 
     if (p->p_semAdd != NULL) {
@@ -145,9 +152,18 @@ static void terminateProcess(pcb_t *p) {
         p->p_semAdd = NULL;
 
         if (removed != NULL) {
-            if (isDeviceSemaphore(sem)) {
+            if (isDeviceSemaphore(sem) || sem == &devSems[PSEUDOCLK_SEM]) {
+                /* Semaforo di device o pseudo-clock: il processo era
+                 * soft-blocked. Il valore del semaforo NON va toccato
+                 * (sarà l'interrupt del device / interval timer a fare la V);
+                 * basta aggiornare il contatore dei soft-blocked. */
                 softBlockCount--;
-                //EDBG("[TERM] device sem: softBlockCount--\n");
+            } else {
+                /* Semaforo "normale" (mutex/sincronizzazione): la P che il
+                 * processo terminato aveva eseguito va annullata, altrimenti
+                 * il valore resta sbilanciato e altri processi si bloccano
+                 * per sempre. */
+                (*sem)++;
             }
         }
 
@@ -178,40 +194,48 @@ static void programTrapHandler(void) {
 void exceptionHandler(void) {
     state_t *savedState = (state_t *) BIOSDATAPAGE;
     unsigned int cause   = savedState->cause;
-    unsigned int excCode = cause & CAUSE_EXCCODE_MASK;
 
     updateCPUTime();
-    /* interrupt*/
+
+    /* Bit piu significativo di cause acceso => interrupt */
     if (cause & 0x80000000) {
         interruptHandler();
         return;
     }
-    /* handler delle chiamate di sistema*/
-    else if (excCode == 8 || excCode == 11) {
-        /* aumentiamo di 4 il PC*/
-        savedState->pc_epc += WORDLEN;
-        syscallHandler(savedState);
-        return;
-    }
-    /* tlb*/
-    else if (excCode == 12 || excCode == 13 || excCode == 15) {
-        tlbExceptionHandler();
-        return;
-    }
-    /*restanti*/
-    else if (excCode == 1 || excCode == 5 || excCode == 7) {
-        unsigned int mpp = savedState->status & MSTATUS_MPP_MASK;
-        if (mpp == 0) {
-            savedState->cause = 5;
-            programTrapHandler();
-        } else {
+
+    /* Per le eccezioni (non interrupt) il tipo e' dato dal solo ExcCode */
+    unsigned int excCode = cause & CAUSE_EXCCODE_MASK;
+
+    switch (excCode) {
+        /* ECALL da U-mode (8) o da M-mode (11): chiamata di sistema */
+        case EXC_ECU:   /* 8  */
+        case EXC_ECM:   /* 11 */
+            /* il PC va avanzato di una word per non rieseguire la ecall */
+            savedState->pc_epc += WORDLEN;
+            syscallHandler(savedState);
+            break;
+
+        /* Eccezioni del TLB / gestione memoria:
+         *  - page fault standard RISC-V: Instruction (12), Load (13), Store (15)
+         *  - codici specifici uRISCV: MOD (24), TLBL (25), TLBS (26),
+         *    UTLBL (27), UTLBS (28)
+         * Tutte vengono trattate come "memory management trap". */
+        case EXC_IPF:   /* 12 */
+        case EXC_LPF:   /* 13 */
+        case EXC_SPF:   /* 15 */
+        case EXC_MOD:   /* 24 */
+        case EXC_TLBL:  /* 25 */
+        case EXC_TLBS:  /* 26 */
+        case EXC_UTLBL: /* 27 */
+        case EXC_UTLBS: /* 28 */
             tlbExceptionHandler();
-        }
-        return;
-    }
-    else {
-        programTrapHandler();
-        return;
+            break;
+
+        /* Tutto il resto (misallineamenti, access fault, istruzione
+         * illegale, breakpoint, ...) e' un Program Trap */
+        default:
+            programTrapHandler();
+            break;
     }
 }
 /* gestisce le chiamate di sistema (quando un proc. ha bisogno di qualcosa dal kernel)*/
@@ -246,10 +270,9 @@ static void syscallHandler(state_t *savedState) {
                 LDST(&currentProcess->p_s);
             }
 
+            /* allocPcb ha già azzerato p_time e p_semAdd */
             copyState(&child->p_s, newState);
             child->p_supportStruct = support;
-            child->p_time          = 0;
-            child->p_semAdd        = NULL;
             child->p_prio          = prio;
 
             activeProcs_add(child);
@@ -262,18 +285,13 @@ static void syscallHandler(state_t *savedState) {
 
             savedState->reg_a0 = (unsigned int) child->p_pid;
             copyState(&currentProcess->p_s, savedState);
-            if (child->p_prio > currentProcess->p_prio) {
-                insertProcQ(&readyQueue, currentProcess);
-                insertProcQ(&readyQueue, child);
-                currentProcess = NULL;
-                scheduler();
-            } else {
-                /* Reinserisci il padre in coda (yield implicito) poi schedula il figlio */
-                insertProcQ(&readyQueue, currentProcess);
-                insertProcQ(&readyQueue, child);
-                currentProcess = NULL;
-                scheduler();
-            }
+            /* Mettiamo in ready queue sia padre che figlio e lasciamo allo
+             * scheduler la scelta in base alla priorità: così, se il figlio
+             * è più prioritario, parte lui per primo. */
+            insertProcQ(&readyQueue, currentProcess);
+            insertProcQ(&readyQueue, child);
+            currentProcess = NULL;
+            scheduler();
             break;
         }
 
@@ -442,7 +460,10 @@ static void syscallHandler(state_t *savedState) {
             updateCPUTime();
             copyState(&currentProcess->p_s, savedState);
             EDBG_HEX("[YIELD] PID=", (unsigned int)currentProcess->p_pid);
-            insertProcQ(&readyQueue, currentProcess);
+            /* Non rimettiamo subito il processo in ready queue: lo
+             * affidiamo allo scheduler tramite yieldedProcess, così
+             * un eventuale processo pronto di pari priorità gira prima. */
+            yieldedProcess = currentProcess;
             currentProcess = NULL;
             scheduler();
             break;

@@ -19,25 +19,45 @@
 #define SDBG_HEX(msg,val)   ((void)0)
 #endif
 
-void scheduler(void) { 
+void scheduler(void) {
 
-    /* 1. Se c’è un processo ready lo eseguiamo */
+    /* 0. Gestione di un eventuale processo che ha appena fatto YIELD:
+     * se esiste un processo pronto di priorità >= a quella dello yielder,
+     * lo yielder viene rimesso in coda (cede la CPU); altrimenti riprende
+     * subito perché è comunque il più prioritario. */
+    if (yieldedProcess != NULL) {
+        pcb_t *y = yieldedProcess;
+        yieldedProcess = NULL;
+        if (!emptyProcQ(&readyQueue) &&
+            headProcQ(&readyQueue)->p_prio >= y->p_prio) {
+            insertProcQ(&readyQueue, y);
+        } else {
+            currentProcess = y;
+            STCK(startTOD);
+            setTIMER(TIMESLICE * (*((cpu_t *) TIMESCALEADDR)));
+            LDST(&currentProcess->p_s);
+        }
+    }
+
+    /* 1. Se c’è un processo ready lo eseguiamo (round-robin con time slice) */
     if (!emptyProcQ(&readyQueue)) {
         currentProcess = removeProcQ(&readyQueue);
+        STCK(startTOD);
         setTIMER(TIMESLICE * (*((cpu_t *) TIMESCALEADDR)));
         LDST(&currentProcess->p_s);
     }
 
-    /* 2. Se non ci sono più processi HALT del sistema */
+    /* Nessun processo in esecuzione da qui in poi */
+    currentProcess = NULL;
+
+    /* 2. Nessun processo vivo: HALT del sistema */
     if (processCount == 0) {
         SDBG("All processes completed!\n");
         HALT();
     }
 
-    /* 3. Se ci sono processi soft-blocked facciamo WAIT */
+    /* 3. Processi vivi ma tutti soft-blocked: attesa di un interrupt (WAIT) */
     if (softBlockCount > 0) {
-        currentProcess = NULL;
-
         setMIE(MIE_ALL & ~MIE_MTIE_MASK);
         unsigned int status = getSTATUS();
         status |= MSTATUS_MIE_MASK;
@@ -46,23 +66,9 @@ void scheduler(void) {
         WAIT();
     }
 
-    if (emptyProcQ(&readyQueue) && processCount > 0 && softBlockCount == 0) {
-        // cerca un processo attivo
-        for (int i = 0; i < MAXPROC; i++) {
-            if (activeProcs[i] != NULL) {
-                currentProcess = activeProcs[i];
-                LDST(&currentProcess->p_s);
-            }
-        }
-        // se non troviamo nulla siamo in DEADLOCK
-        SDBG("[DEADLOCK] No ready processes and no soft-blocked processes\n");
-        HALT();
-    }
-    if (processCount == 0) {
-        SDBG("System halted\n");
-        HALT();
-    }
-    PANIC(); /* Non dovrebbe mai arrivarci */
+    /* 4. Processi vivi, nessuno pronto e nessuno soft-blocked: DEADLOCK */
+    SDBG("[DEADLOCK] No ready processes and no soft-blocked processes\n");
+    PANIC();
 }
 
 

@@ -152,8 +152,10 @@ void interruptHandler(void) {
             unsigned int txStatus = TERM_TRANSM_STATUS(termBase) & 0xFFu;
             unsigned int rxStatus = TERM_RECV_STATUS(termBase) & 0xFFu;
 
-            /* TX ha priorità su RX */
-            if (txStatus != READY && txStatus != BUSY) {
+            /* TX ha priorità su RX. Il sotto-device che ha generato
+             * l'interrupt è quello con status == 5 (carattere trasmesso
+             * per il TX, carattere ricevuto per l'RX). */
+            if (txStatus == OKCHARTRANS) {
 
                 unsigned int savedStatus = TERM_TRANSM_STATUS(termBase);
                 TERM_TRANSM_COMMAND(termBase) = ACK;
@@ -179,7 +181,7 @@ void interruptHandler(void) {
                 }
             }
 
-            if (rxStatus != READY && rxStatus != BUSY) {
+            if (rxStatus == CHARRECV) {
 
                 unsigned int savedStatus = TERM_RECV_STATUS(termBase);
                 TERM_RECV_COMMAND(termBase) = ACK;
