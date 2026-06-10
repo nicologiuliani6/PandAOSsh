@@ -57,12 +57,19 @@ static void markPageNotValid(pteEntry_t *pte) {
     interruptsOn();
 }
 
-/* Rende presente un'entry di Page Table (PFN + V) e azzera il TLB in
- * modo atomico. */
+/* Rende presente un'entry di Page Table (PFN + V) e aggiorna il TLB in
+ * modo atomico. Oltre ad azzerare le entry stantie con TLBCLR, l'entry
+ * appena resa valida viene scritta DIRETTAMENTE nel TLB (TLBWR): così
+ * l'accesso che riprende subito dopo trova già la traduzione valida senza
+ * dover passare per un evento di TLB-Refill (che in alcune situazioni non
+ * viene rigenerato, lasciando il processo in page-fault loop). */
 static void markPagePresent(pteEntry_t *pte, memaddr phys) {
     interruptsOff();
     pte->pte_entryLO = phys | DIRTYON | VALIDON;
     TLBCLR();
+    setENTRYHI(pte->pte_entryHI);
+    setENTRYLO(pte->pte_entryLO);
+    TLBWR();
     interruptsOn();
 }
 

@@ -17,6 +17,11 @@ MultiPandOS
 MultiPandOS.core.uriscv
 MultiPandOS.stab.uriscv
 
+# --- Artefatti di build delle U-proc di test (rigenerabili con make in testers/) ---
+testers/*.elf
+testers/*.aout.uriscv
+testers/*.uriscv
+
 # --- Archivi ---
 *.tar.gz
 *.zip

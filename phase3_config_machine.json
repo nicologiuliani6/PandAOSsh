@@ -35,7 +35,7 @@
             "file": "testers/sl.uriscv"
         },
         "flash7": {
-            "enabled": false,
+            "enabled": true,
             "file": "testers/calc.uriscv"
         },
         "terminal0": {
