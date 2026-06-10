@@ -68,3 +68,34 @@ add_custom_target(phase2
     DEPENDS MultiPandOS_phase2
     COMMENT ">>> Build Phase 2 - carica config_machine.json nell'emulatore"
 )
+
+# -----------------------------------------------------------------------
+# PHASE 3 - Support Level (memoria virtuale, U-proc, terminali)
+# Produce MultiPandOS.core.uriscv (compatibile con phase3_config_machine.json)
+# Uso: make phase3
+# -----------------------------------------------------------------------
+add_executable(MultiPandOS_phase3 EXCLUDE_FROM_ALL
+    ./klog.c
+    phase1/pcb.c
+    phase1/asl.c
+    phase2/initial.c
+    phase2/scheduler.c
+    phase2/exceptions.c
+    phase2/interrupts.c
+    phase3/initProc.c
+    phase3/vmSupport.c
+    phase3/sysSupport.c
+    ${URISCV_SRC}/crtso.S
+    ${URISCV_SRC}/liburiscv.S
+)
+target_compile_definitions(MultiPandOS_phase3 PRIVATE SUPPORT_LEVEL)
+
+add_custom_target(phase3
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${PROJECT_BINARY_DIR}/MultiPandOS_phase3
+        ${PROJECT_BINARY_DIR}/MultiPandOS
+    COMMAND uriscv-elf2uriscv -k ${PROJECT_BINARY_DIR}/MultiPandOS
+    BYPRODUCTS MultiPandOS.core.uriscv MultiPandOS.stab.uriscv
+    DEPENDS MultiPandOS_phase3
+    COMMENT ">>> Build Phase 3 - carica phase3_config_machine.json nell'emulatore"
+)

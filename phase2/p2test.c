@@ -128,14 +128,8 @@ void print(char *msg) {
 }
 
 
-/* TLB-Refill Handler */
-/* One can place debug calls here, but not calls to print */
-void uTLB_RefillHandler() {
-    setENTRYHI(0x80000000);
-    setENTRYLO(0x00000000);
-    TLBWR();
-    LDST((state_t*) BIOSDATAPAGE);
-}
+/* TLB-Refill Handler: ora implementato (in modo unico per phase 2 e 3)
+ * in phase2/exceptions.c. Lo skeleton che stava qui è stato rimosso. */
 
 
 /*********************************************************************/

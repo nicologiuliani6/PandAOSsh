@@ -39,6 +39,40 @@ static void copyState(state_t *dst, state_t *src);
 extern void scheduler(void);
 extern void interruptHandler(void);
 
+/* ------------------------------------------------------------------ */
+/* TLB-Refill event handler                                            */
+/*                                                                     */
+/* Gira in kernel-mode, interrupt disabilitati, sullo stack del Nucleus*/
+/* (primo frame di RAM). In phase 2 (nessuna support struct) si comporta*/
+/* come lo skeleton fornito dal tester; in phase 3 (SUPPORT_LEVEL) usa  */
+/* la Page Table della U-proc corrente per ricaricare l'entry mancante. */
+/* ------------------------------------------------------------------ */
+void uTLB_RefillHandler(void) {
+    state_t *savedState = (state_t *) BIOSDATAPAGE;
+
+#ifdef SUPPORT_LEVEL
+    /* Indice [0..31] della pagina mancante nella Page Table. */
+    unsigned int vpn = (savedState->entry_hi >> VPNSHIFT) & 0xFFFFF;
+    int index;
+    if (vpn == 0xBFFFF)
+        index = 31;                       /* pagina di stack */
+    else
+        index = (int)(vpn - 0x80000);     /* pagine .text/.data 0..30 */
+
+    pteEntry_t *pte = &currentProcess->p_supportStruct->sup_privatePgTbl[index];
+    setENTRYHI(pte->pte_entryHI);
+    setENTRYLO(pte->pte_entryLO);
+    TLBWR();
+    LDST(savedState);
+#else
+    /* phase 2: skeleton placeholder (il p5 del tester scrive a 0x80000000). */
+    setENTRYHI(0x80000000);
+    setENTRYLO(0x00000000);
+    TLBWR();
+    LDST(savedState);
+#endif
+}
+
 /*copia dello stato da dst su src*/
 static void copyState(state_t *dst, state_t *src) {
     unsigned int *d = (unsigned int *) dst;
@@ -381,45 +415,18 @@ static void syscallHandler(state_t *savedState) {
                 ? ((subword == 3) ? TERM_TX_SEM(dev) : TERM_RX_SEM(dev))
                 : DEV_SEM_BASE(line, dev);
 
-            *commandAddr = commandValue;
-
             updateCPUTime();
             copyState(&currentProcess->p_s, savedState);
 
-            unsigned int *devBase = (unsigned int *)(START_DEVREG + (line - 3)*0x80 + dev*0x10);
-            int ready = 0;
-
-            if (line == 7) {
-                if (subword == 3) {
-                    if (!(devBase[3] & 0x1)) {
-                        devSems[semIdx]--;
-                        blockCurrentProcess(&devSems[semIdx]);
-                    } else {
-                        unsigned int status = devBase[2];
-                        *commandAddr = commandValue;
-                        devBase[3] = 1;
-                        savedState->reg_a0 = status;
-                        LDST(&currentProcess->p_s);
-                    }
-                } else {
-                    if (!(devBase[1] & 0x1)) {
-                        devSems[semIdx]--;
-                        blockCurrentProcess(&devSems[semIdx]);
-                    } else {
-                        unsigned int status = devBase[0];
-                        devBase[1] = 1;
-                        savedState->reg_a0 = status;
-                        LDST(&currentProcess->p_s);
-                    }
-                }
-            } else {
-                ready = devBase[1] & 0x1;
-                if (!ready) {
-                    devSems[semIdx]--;
-                    blockCurrentProcess(&devSems[semIdx]);
-                }
-            }
-
+            /* Emette il comando al device e blocca SEMPRE il processo: ogni
+             * operazione di I/O è asincrona e si conclude con un interrupt di
+             * completamento, che risveglia il processo impostandone reg_a0 al
+             * device status. Il Nucleus gira con gli interrupt disabilitati,
+             * quindi non c'è race tra l'emissione del comando e il blocco:
+             * l'interrupt resta pending finché lo scheduler non fa WAIT/LDST. */
+            *commandAddr = commandValue;
+            devSems[semIdx]--;
+            blockCurrentProcess(&devSems[semIdx]);
             break;
         }
 

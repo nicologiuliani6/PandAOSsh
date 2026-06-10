@@ -168,6 +168,32 @@ phase2/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase2.dir/build.make CMakeFiles/phase2.dir/build
 .PHONY : phase2/fast
 
+#=============================================================================
+# Target rules for targets named MultiPandOS_phase3
+
+# Build rule for target.
+MultiPandOS_phase3: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 MultiPandOS_phase3
+.PHONY : MultiPandOS_phase3
+
+# fast build rule for target.
+MultiPandOS_phase3/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/build
+.PHONY : MultiPandOS_phase3/fast
+
+#=============================================================================
+# Target rules for targets named phase3
+
+# Build rule for target.
+phase3: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 phase3
+.PHONY : phase3
+
+# fast build rule for target.
+phase3/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/phase3.dir/build.make CMakeFiles/phase3.dir/build
+.PHONY : phase3/fast
+
 klog.o: klog.c.o
 .PHONY : klog.o
 
@@ -175,6 +201,7 @@ klog.o: klog.c.o
 klog.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/klog.c.o
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/klog.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/klog.c.o
 .PHONY : klog.c.o
 
 klog.i: klog.c.i
@@ -184,6 +211,7 @@ klog.i: klog.c.i
 klog.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/klog.c.i
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/klog.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/klog.c.i
 .PHONY : klog.c.i
 
 klog.s: klog.c.s
@@ -193,6 +221,7 @@ klog.s: klog.c.s
 klog.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/klog.c.s
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/klog.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/klog.c.s
 .PHONY : klog.c.s
 
 phase1/asl.o: phase1/asl.c.o
@@ -202,6 +231,7 @@ phase1/asl.o: phase1/asl.c.o
 phase1/asl.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/phase1/asl.c.o
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase1/asl.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase1/asl.c.o
 .PHONY : phase1/asl.c.o
 
 phase1/asl.i: phase1/asl.c.i
@@ -211,6 +241,7 @@ phase1/asl.i: phase1/asl.c.i
 phase1/asl.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/phase1/asl.c.i
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase1/asl.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase1/asl.c.i
 .PHONY : phase1/asl.c.i
 
 phase1/asl.s: phase1/asl.c.s
@@ -220,6 +251,7 @@ phase1/asl.s: phase1/asl.c.s
 phase1/asl.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/phase1/asl.c.s
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase1/asl.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase1/asl.c.s
 .PHONY : phase1/asl.c.s
 
 phase1/p1test.o: phase1/p1test.c.o
@@ -253,6 +285,7 @@ phase1/pcb.o: phase1/pcb.c.o
 phase1/pcb.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/phase1/pcb.c.o
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase1/pcb.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase1/pcb.c.o
 .PHONY : phase1/pcb.c.o
 
 phase1/pcb.i: phase1/pcb.c.i
@@ -262,6 +295,7 @@ phase1/pcb.i: phase1/pcb.c.i
 phase1/pcb.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/phase1/pcb.c.i
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase1/pcb.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase1/pcb.c.i
 .PHONY : phase1/pcb.c.i
 
 phase1/pcb.s: phase1/pcb.c.s
@@ -271,6 +305,7 @@ phase1/pcb.s: phase1/pcb.c.s
 phase1/pcb.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/phase1/pcb.c.s
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase1/pcb.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase1/pcb.c.s
 .PHONY : phase1/pcb.c.s
 
 phase2/exceptions.o: phase2/exceptions.c.o
@@ -279,6 +314,7 @@ phase2/exceptions.o: phase2/exceptions.c.o
 # target to build an object file
 phase2/exceptions.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/exceptions.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase2/exceptions.c.o
 .PHONY : phase2/exceptions.c.o
 
 phase2/exceptions.i: phase2/exceptions.c.i
@@ -287,6 +323,7 @@ phase2/exceptions.i: phase2/exceptions.c.i
 # target to preprocess a source file
 phase2/exceptions.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/exceptions.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase2/exceptions.c.i
 .PHONY : phase2/exceptions.c.i
 
 phase2/exceptions.s: phase2/exceptions.c.s
@@ -295,6 +332,7 @@ phase2/exceptions.s: phase2/exceptions.c.s
 # target to generate assembly for a file
 phase2/exceptions.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/exceptions.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase2/exceptions.c.s
 .PHONY : phase2/exceptions.c.s
 
 phase2/initial.o: phase2/initial.c.o
@@ -303,6 +341,7 @@ phase2/initial.o: phase2/initial.c.o
 # target to build an object file
 phase2/initial.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/initial.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase2/initial.c.o
 .PHONY : phase2/initial.c.o
 
 phase2/initial.i: phase2/initial.c.i
@@ -311,6 +350,7 @@ phase2/initial.i: phase2/initial.c.i
 # target to preprocess a source file
 phase2/initial.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/initial.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase2/initial.c.i
 .PHONY : phase2/initial.c.i
 
 phase2/initial.s: phase2/initial.c.s
@@ -319,6 +359,7 @@ phase2/initial.s: phase2/initial.c.s
 # target to generate assembly for a file
 phase2/initial.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/initial.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase2/initial.c.s
 .PHONY : phase2/initial.c.s
 
 phase2/interrupts.o: phase2/interrupts.c.o
@@ -327,6 +368,7 @@ phase2/interrupts.o: phase2/interrupts.c.o
 # target to build an object file
 phase2/interrupts.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/interrupts.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase2/interrupts.c.o
 .PHONY : phase2/interrupts.c.o
 
 phase2/interrupts.i: phase2/interrupts.c.i
@@ -335,6 +377,7 @@ phase2/interrupts.i: phase2/interrupts.c.i
 # target to preprocess a source file
 phase2/interrupts.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/interrupts.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase2/interrupts.c.i
 .PHONY : phase2/interrupts.c.i
 
 phase2/interrupts.s: phase2/interrupts.c.s
@@ -343,6 +386,7 @@ phase2/interrupts.s: phase2/interrupts.c.s
 # target to generate assembly for a file
 phase2/interrupts.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/interrupts.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase2/interrupts.c.s
 .PHONY : phase2/interrupts.c.s
 
 phase2/p2test.o: phase2/p2test.c.o
@@ -375,6 +419,7 @@ phase2/scheduler.o: phase2/scheduler.c.o
 # target to build an object file
 phase2/scheduler.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/scheduler.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase2/scheduler.c.o
 .PHONY : phase2/scheduler.c.o
 
 phase2/scheduler.i: phase2/scheduler.c.i
@@ -383,6 +428,7 @@ phase2/scheduler.i: phase2/scheduler.c.i
 # target to preprocess a source file
 phase2/scheduler.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/scheduler.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase2/scheduler.c.i
 .PHONY : phase2/scheduler.c.i
 
 phase2/scheduler.s: phase2/scheduler.c.s
@@ -391,7 +437,80 @@ phase2/scheduler.s: phase2/scheduler.c.s
 # target to generate assembly for a file
 phase2/scheduler.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/phase2/scheduler.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase2/scheduler.c.s
 .PHONY : phase2/scheduler.c.s
+
+phase3/initProc.o: phase3/initProc.c.o
+.PHONY : phase3/initProc.o
+
+# target to build an object file
+phase3/initProc.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase3/initProc.c.o
+.PHONY : phase3/initProc.c.o
+
+phase3/initProc.i: phase3/initProc.c.i
+.PHONY : phase3/initProc.i
+
+# target to preprocess a source file
+phase3/initProc.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase3/initProc.c.i
+.PHONY : phase3/initProc.c.i
+
+phase3/initProc.s: phase3/initProc.c.s
+.PHONY : phase3/initProc.s
+
+# target to generate assembly for a file
+phase3/initProc.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase3/initProc.c.s
+.PHONY : phase3/initProc.c.s
+
+phase3/sysSupport.o: phase3/sysSupport.c.o
+.PHONY : phase3/sysSupport.o
+
+# target to build an object file
+phase3/sysSupport.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase3/sysSupport.c.o
+.PHONY : phase3/sysSupport.c.o
+
+phase3/sysSupport.i: phase3/sysSupport.c.i
+.PHONY : phase3/sysSupport.i
+
+# target to preprocess a source file
+phase3/sysSupport.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase3/sysSupport.c.i
+.PHONY : phase3/sysSupport.c.i
+
+phase3/sysSupport.s: phase3/sysSupport.c.s
+.PHONY : phase3/sysSupport.s
+
+# target to generate assembly for a file
+phase3/sysSupport.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase3/sysSupport.c.s
+.PHONY : phase3/sysSupport.c.s
+
+phase3/vmSupport.o: phase3/vmSupport.c.o
+.PHONY : phase3/vmSupport.o
+
+# target to build an object file
+phase3/vmSupport.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase3/vmSupport.c.o
+.PHONY : phase3/vmSupport.c.o
+
+phase3/vmSupport.i: phase3/vmSupport.c.i
+.PHONY : phase3/vmSupport.i
+
+# target to preprocess a source file
+phase3/vmSupport.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase3/vmSupport.c.i
+.PHONY : phase3/vmSupport.c.i
+
+phase3/vmSupport.s: phase3/vmSupport.c.s
+.PHONY : phase3/vmSupport.s
+
+# target to generate assembly for a file
+phase3/vmSupport.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/phase3/vmSupport.c.s
+.PHONY : phase3/vmSupport.c.s
 
 usr/local/share/uriscv/crtso.o: usr/local/share/uriscv/crtso.S.o
 .PHONY : usr/local/share/uriscv/crtso.o
@@ -400,6 +519,7 @@ usr/local/share/uriscv/crtso.o: usr/local/share/uriscv/crtso.S.o
 usr/local/share/uriscv/crtso.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/usr/local/share/uriscv/crtso.S.o
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/usr/local/share/uriscv/crtso.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/usr/local/share/uriscv/crtso.S.o
 .PHONY : usr/local/share/uriscv/crtso.S.o
 
 usr/local/share/uriscv/liburiscv.o: usr/local/share/uriscv/liburiscv.S.o
@@ -409,6 +529,7 @@ usr/local/share/uriscv/liburiscv.o: usr/local/share/uriscv/liburiscv.S.o
 usr/local/share/uriscv/liburiscv.S.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase1.dir/build.make CMakeFiles/MultiPandOS_phase1.dir/usr/local/share/uriscv/liburiscv.S.o
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase2.dir/build.make CMakeFiles/MultiPandOS_phase2.dir/usr/local/share/uriscv/liburiscv.S.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/MultiPandOS_phase3.dir/build.make CMakeFiles/MultiPandOS_phase3.dir/usr/local/share/uriscv/liburiscv.S.o
 .PHONY : usr/local/share/uriscv/liburiscv.S.o
 
 # Help Target
@@ -421,8 +542,10 @@ help:
 	@echo "... rebuild_cache"
 	@echo "... phase1"
 	@echo "... phase2"
+	@echo "... phase3"
 	@echo "... MultiPandOS_phase1"
 	@echo "... MultiPandOS_phase2"
+	@echo "... MultiPandOS_phase3"
 	@echo "... klog.o"
 	@echo "... klog.i"
 	@echo "... klog.s"
@@ -450,6 +573,15 @@ help:
 	@echo "... phase2/scheduler.o"
 	@echo "... phase2/scheduler.i"
 	@echo "... phase2/scheduler.s"
+	@echo "... phase3/initProc.o"
+	@echo "... phase3/initProc.i"
+	@echo "... phase3/initProc.s"
+	@echo "... phase3/sysSupport.o"
+	@echo "... phase3/sysSupport.i"
+	@echo "... phase3/sysSupport.s"
+	@echo "... phase3/vmSupport.o"
+	@echo "... phase3/vmSupport.i"
+	@echo "... phase3/vmSupport.s"
 	@echo "... usr/local/share/uriscv/crtso.o"
 	@echo "... usr/local/share/uriscv/liburiscv.o"
 .PHONY : help
