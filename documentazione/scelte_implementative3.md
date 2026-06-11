@@ -62,9 +62,9 @@ La vittima viene scelta con un semplice **round-robin** (`fifoNext = (fifoNext+1
 
 > **Scelta progettuale: installazione diretta in TLB**
 
-Le funzioni `markPageNotValid` e `markPagePresent` aggiornano la PTE e il TLB con gli interrupt disabilitati, per rendere atomica la coppia di operazioni. La scelta critica è in `markPagePresent`: oltre a `TLBCLR` (che azzera le entry stantie), l'entry appena resa valida viene scritta **direttamente** nel TLB con `setENTRYHI`/`setENTRYLO`/`TLBWR`.
+Le funzioni `markPageNotValid` e `markPagePresent` aggiornano la PTE e il TLB con gli interrupt disabilitati, per rendere atomica la coppia di operazioni. La scelta in `markPagePresent`: oltre a `TLBCLR` (che azzera le entry stantie), l'entry appena resa valida viene scritta **direttamente** nel TLB con `setENTRYHI`/`setENTRYLO`/`TLBWR`.
 
-Questa deviazione dallo schema "solo TLBCLR" è stata adottata dopo aver diagnosticato un **page-fault loop**: in alcune situazioni l'evento di TLB-Refill smetteva di rigenerare l'entry e i fault venivano dirottati sul Pager, che con il solo `TLBCLR` non installava mai la traduzione, lasciando la U-proc a ripetere all'infinito lo stesso fault. Installando la traduzione direttamente nel TLB, l'accesso che riprende subito dopo trova già l'entry valida.
+La specifica ammette due modi per aggiornare il TLB dopo un page fault: (a) cancellare l'intero TLB con `TLBCLR`, oppure (b) sondare il TLB e riscrivere la singola entry. Questa implementazione adotta una variante del metodo (b) — resta quindi **all'interno della specifica**. È stata preferita dopo aver diagnosticato un **page-fault loop**: in alcune situazioni l'evento di TLB-Refill smetteva di rigenerare l'entry e i fault venivano dirottati sul Pager, che con il solo `TLBCLR` non installava mai la traduzione, lasciando la U-proc a ripetere all'infinito lo stesso fault. Installando la traduzione direttamente nel TLB, l'accesso che riprende subito dopo trova già l'entry valida.
 
 ### 3.5 Backing store su device flash
 
@@ -126,4 +126,4 @@ Le scelte implementative della Phase 3 sono state orientate dai seguenti princip
 - **Atomicità Page Table ↔ TLB**: ogni modifica di una PTE è accompagnata dal corrispondente aggiornamento del TLB a interrupt disabilitati.
 - **Terminazione ordinata**: prima di morire, una U-proc libera i propri frame di Swap Pool e sblocca l'attendente corretto, mantenendo coerenti tabelle e semafori.
 - **Assenza di allocazioni dinamiche**: support pool, Swap Pool e Page Table sono tutte strutture statiche, garantendo comportamento deterministico.
-- **Deviazioni documentate**: l'installazione diretta in TLB nel Pager (correttivo per il page-fault loop) è motivata esplicitamente e circoscritta al minimo indispensabile.
+- **Aderenza alla specifica**: nessuna deviazione rispetto alle specifiche della Phase 3. L'installazione diretta in TLB nel Pager rientra tra i metodi ammessi dalla specifica per l'aggiornamento del TLB, ed è documentata esplicitamente.

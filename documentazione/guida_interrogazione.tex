@@ -1,0 +1,493 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[italian]{babel}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+
+% ------------------------------------------------------------------
+% Stile
+% ------------------------------------------------------------------
+\definecolor{codebg}{rgb}{0.96,0.96,0.96}
+\definecolor{kw}{rgb}{0.0,0.2,0.6}
+\definecolor{cmt}{rgb}{0.3,0.5,0.3}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  keywordstyle=\color{kw}\bfseries,
+  commentstyle=\color{cmt}\itshape,
+  frame=single,
+  framesep=4pt,
+  breaklines=true,
+  showstringspaces=false,
+  language=C
+}
+
+\newcommand{\code}[1]{\texttt{#1}}
+
+% box "domanda d'esame"
+\newcommand{\qbox}[2]{%
+  \par\smallskip\noindent
+  \textbf{\color{kw}D:} \emph{#1}\\
+  \textbf{R:} #2\par\smallskip
+}
+
+\titleformat{\section}{\large\bfseries\color{kw}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+
+\setlist{itemsep=1pt,topsep=2pt}
+
+\title{\textbf{PandOSsh — Guida allo studio per l'interrogazione}\\[2pt]
+\large Struttura del progetto e del kernel}
+\author{Nicolò Giuliani \and Gaia Longo \and Daniel Palamarciuc}
+\date{A.A. 2025/2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\bigskip
+\hrule
+\bigskip
+
+% ==================================================================
+\section{Visione d'insieme}
+% ==================================================================
+
+\textbf{PandOSsh} è un sistema operativo didattico costruito \emph{a strati}
+(layered) ed eseguito sull'emulatore \textbf{$\mu$RISCV} (architettura RISC-V
+a 32 bit, \code{rv32imafd}). Ogni fase del progetto realizza un livello e
+poggia su quello sottostante:
+
+\begin{center}
+\begin{tabular}{@{}clp{8.4cm}@{}}
+\toprule
+\textbf{Livello} & \textbf{Fase} & \textbf{Contenuto} \\
+\midrule
+1 & (firmware/ROM) & BIOS dell'emulatore: bootstrap, gestione fisica eccezioni. \\
+2 & \textbf{Phase 1} & Strutture dati di base: PCB, code di processi, albero dei processi, ASL. \\
+3 & \textbf{Phase 2} & \textbf{Nucleus}: scheduler, gestione eccezioni/syscall, interrupt, device. \\
+4 & \textbf{Phase 3} & \textbf{Support Level}: memoria virtuale, U-proc in user-mode, syscall utente. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Idea chiave da ripetere all'esame:} ogni livello fornisce
+un'\emph{astrazione} al livello superiore e ne nasconde i dettagli. Phase 1 dà
+strutture dati pronte; Phase 2 le usa per costruire il concetto di
+\emph{processo} e di \emph{syscall}; Phase 3 usa le syscall del Nucleus per
+costruire \emph{memoria virtuale} e \emph{processi utente}.
+
+\paragraph{Principio trasversale: nessuna allocazione dinamica.}
+Tutto è preallocato in array statici e gestito con \emph{free list}. Niente
+\code{malloc}: un OS deve essere \emph{deterministico}, senza frammentazione né
+attese impreviste. Il numero massimo di processi (\code{MAXPROC}=20), semafori,
+frame, ecc.\ è noto a tempo di compilazione.
+
+\paragraph{Build.} Sistema \textbf{CMake}. I tre target (\code{phase1},
+\code{phase2}, \code{phase3}) generano \emph{tutti} lo stesso file
+\code{build/MultiPandOS.core.uriscv}, caricato dall'emulatore. Quindi va
+ricompilato il target giusto \emph{prima} di lanciare la relativa
+configurazione (\code{config\_machine.json} per fasi 1--2,
+\code{phase3\_config\_machine.json} per la 3).
+
+% ==================================================================
+\section{Concetti della macchina \texorpdfstring{$\mu$}{u}RISCV}
+% ==================================================================
+
+Vocabolario che l'esaminatore dà per scontato.
+
+\begin{description}[style=nextline,leftmargin=0pt]
+\item[Kernel vs user mode] Il bit \code{MPP} nel registro \code{status}
+  distingue \emph{kernel-mode} (M, privilegiato) da \emph{user-mode} (U). Le
+  U-proc girano in user-mode; il Nucleus in kernel-mode.
+\item[Eccezione vs interrupt] Entrambe deviano il flusso, ma: un'\textbf{eccezione}
+  è \emph{sincrona} (causata dall'istruzione corrente: syscall, page fault,
+  trap); un \textbf{interrupt} è \emph{asincrono} (un device o un timer). Si
+  distinguono dal \textbf{bit 31 del registro \code{cause}}: se acceso $\to$
+  interrupt; altrimenti il campo \code{ExcCode} indica il tipo di eccezione.
+\item[Pass Up Vector] Tabella (a \code{0x0FFFF900}) che dice al firmware
+  \emph{dove saltare} quando avviene un'eccezione: indirizzo dell'handler e
+  puntatore allo stack da usare. Esistono due voci: una per il TLB-Refill, una
+  per tutte le altre eccezioni.
+\item[BIOSDATAPAGE] Pagina (a \code{0x0FFFF000}) dove il firmware salva lo
+  \emph{stato del processore} al momento dell'eccezione. L'handler lo legge da
+  qui (lo chiamiamo \code{savedState}).
+\item[SYSCALL / ECALL] Un processo richiede un servizio al kernel con
+  l'istruzione \code{ECALL}, che genera un'eccezione (ExcCode 8 da U-mode,
+  11 da M-mode). Il numero della syscall sta in \code{a0}, gli argomenti in
+  \code{a1,a2,a3}.
+\item[Semafori a contatore negativo] Un semaforo è un \code{int}. \emph{P}
+  (\code{PASSEREN}) decrementa: se diventa $<0$ il processo si blocca. \emph{V}
+  (\code{VERHOGEN}) incrementa: se $\le 0$ sblocca un attendente. Il valore
+  negativo conta quanti processi sono in attesa.
+\item[TOD / PLT / Interval Timer] \code{TOD} = orologio assoluto (per misurare
+  il tempo CPU). \code{PLT} (Processor Local Timer) = timer per-CPU che genera
+  l'interrupt di \emph{fine time slice}. \code{Interval Timer} = timer di
+  sistema che batte lo \emph{pseudo-clock} ogni 100\,ms.
+\end{description}
+
+% ==================================================================
+\section{Phase 1 --- Strutture dati (Level 2)}
+% ==================================================================
+
+Moduli \code{pcb.c} e \code{asl.c}. Sono i ``mattoni'': non c'è ancora un
+kernel, solo strutture dati.
+
+\subsection{PCB --- Process Control Block}
+Ogni processo è un \code{pcb\_t}. Campi principali: stato del processore
+(\code{p\_s}), tempo CPU usato (\code{p\_time}), semaforo su cui è bloccato
+(\code{p\_semAdd}), puntatore alla support struct (\code{p\_supportStruct}),
+priorità (\code{p\_prio}), PID (\code{p\_pid}), e i link per le liste
+(\code{p\_list}, \code{p\_parent}, \code{p\_child}, \code{p\_sib}).
+
+\begin{itemize}
+\item \textbf{Free list:} i 20 PCB sono in un array statico; quelli liberi
+  stanno in una lista. \code{allocPcb} ne prende uno (azzerandolo),
+  \code{freePcb} lo restituisce. Allocazione/deallocazione $O(1)$.
+\item \textbf{Code di processi:} liste \emph{doppiamente concatenate e
+  circolari} (\code{list\_head} stile kernel Linux). Inserimento/rimozione
+  $O(1)$; niente casi speciali per coda vuota o con un elemento.
+\item \textbf{Albero dei processi:} ogni PCB ha un puntatore al padre e una
+  lista dei figli (collegati tra loro come fratelli via \code{p\_sib}).
+  Permette di terminare un intero sotto-albero.
+\end{itemize}
+
+\subsection{ASL --- Active Semaphore List}
+Lista dei semafori \emph{attivi} (con almeno un processo bloccato). Ogni
+descrittore \code{semd\_t} contiene la chiave del semaforo e la coda dei PCB
+bloccati su di esso.
+\begin{itemize}
+\item Anche i \code{semd\_t} usano una \textbf{free list} (numero massimo noto).
+\item La ASL è \textbf{ordinata per indirizzo} del semaforo: ricerca lineare ma
+  con terminazione anticipata.
+\item \code{insertBlocked}: trova/alloca il descrittore e accoda il processo.
+  \code{removeBlocked}/\code{outBlocked}: tolgono un processo; se la coda si
+  svuota, il descrittore torna nella free list.
+\end{itemize}
+
+% ==================================================================
+\section{Phase 2 --- Il Nucleus (Level 3) \textmd{\normalsize[parte centrale]}}
+% ==================================================================
+
+È il \textbf{kernel vero e proprio}. Quattro moduli:
+\code{initial.c} (boot), \code{scheduler.c} (scheduling),
+\code{exceptions.c} (eccezioni e syscall), \code{interrupts.c} (interrupt).
+Gira sempre in kernel-mode, con interrupt disabilitati nei punti critici, e
+\emph{non} fa allocazioni dinamiche.
+
+\subsection{Variabili globali del Nucleus}
+Dichiarate in \code{initial.c}, condivise via \code{extern} (\code{globals.h}):
+\begin{center}
+\begin{tabular}{@{}lp{10cm}@{}}
+\toprule
+\code{processCount} & numero di processi vivi (creati e non ancora terminati). \\
+\code{softBlockCount} & quanti processi sono bloccati in attesa di I/O o timer. \\
+\code{readyQueue} & coda dei processi pronti a girare. \\
+\code{currentProcess} & processo attualmente in esecuzione (\code{NULL} se nessuno). \\
+\code{devSems[49]} & semafori dei device (48) + pseudo-clock (1). \\
+\code{startTOD} & valore del TOD all'avvio della time slice corrente. \\
+\code{activeProcs[20]} & array di \emph{tutti} i processi vivi (vedi sotto). \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{\code{initial.c} --- Inizializzazione (boot del kernel)}
+\code{main()} esegue, in ordine:
+\begin{enumerate}
+\item \textbf{Popola il Pass Up Vector}: handler eccezioni $\to$
+  \code{exceptionHandler}, handler TLB-Refill $\to$ \code{uTLB\_RefillHandler}.
+  \emph{Scelta:} gli stack dei due handler sono i \textbf{due frame più alti
+  della RAM} (\code{ramtop} e \code{ramtop$-$PAGESIZE}), non un unico
+  \code{KERNELSTACK} --- altrimenti due eccezioni annidate si sovrascrivono lo
+  stack a vicenda.
+\item Inizializza Phase 1 (\code{initPcbs}, \code{initASL}).
+\item Azzera le globali, inizializza i 49 semafori a 0.
+\item \emph{Legge il TOD reale} (\code{STCK}) in \code{startTOD} invece di
+  azzerarlo: così il primo processo non accumula il tempo del bootstrap.
+\item Avvia l'\textbf{Interval Timer} (\code{LDIT(PSECOND)}, 100\,ms).
+\item Crea \emph{un} processo iniziale (\code{test}, priorità bassa), stack a
+  \code{ramtop$-2\cdot$PAGESIZE}, lo mette in ready queue.
+\item Chiama lo \code{scheduler()} (che non ritorna mai).
+\end{enumerate}
+
+\subsection{\code{scheduler.c} --- Scheduling}
+Politica: \textbf{round-robin con priorità}. Lo scheduler:
+\begin{enumerate}
+\item (gestione \code{YIELD}: vedi syscall SYS8) --- se c'è un processo pronto
+  di priorità $\ge$ a chi ha ceduto, quest'ultimo torna in coda.
+\item Se la ready queue \textbf{non è vuota}: estrae il primo (\code{removeProcQ}
+  rispetta la priorità), carica la \textbf{time slice} nel PLT
+  (\code{setTIMER(TIMESLICE)}, 5\,ms), salva il TOD e fa partire il processo
+  con \code{LDST}.
+\item Se \code{processCount == 0}: tutti i processi finiti $\to$ \code{HALT}
+  (spegne la macchina).
+\item Se \code{softBlockCount > 0}: ci sono processi in attesa di I/O. Il kernel
+  entra in \code{WAIT} con tutti gli interrupt abilitati \emph{tranne il PLT}
+  (\code{MIE\_ALL \& \textasciitilde MIE\_MTIE\_MASK}): non serve il timer
+  mentre nessuno gira, e si evita un interrupt PLT spurio.
+\item Altrimenti (vivi, nessuno pronto, nessuno soft-blocked): \textbf{deadlock}
+  $\to$ \code{PANIC}.
+\end{enumerate}
+
+\subsection{\code{exceptions.c} --- Eccezioni e syscall}
+
+\paragraph{Punto d'ingresso.} \code{exceptionHandler} legge \code{cause} da
+BIOSDATAPAGE e smista:
+\begin{itemize}
+\item bit 31 acceso $\to$ \code{interruptHandler};
+\item ExcCode 8/11 (ECALL) $\to$ \code{syscallHandler} (prima avanza il PC di
+  una word, per non rieseguire la \code{ECALL});
+\item ExcCode di TLB (page fault) $\to$ \code{tlbExceptionHandler} $\to$
+  \code{passUpOrDie(PGFAULTEXCEPT)};
+\item tutto il resto $\to$ \code{programTrapHandler} $\to$
+  \code{passUpOrDie(GENERALEXCEPT)}.
+\end{itemize}
+
+\paragraph{Le syscall del Nucleus} (numero in \code{a0}, negativo). Panoramica:
+\begin{center}
+\begin{longtable}{@{}llp{8.6cm}@{}}
+\toprule
+\textbf{N.} & \textbf{Nome} & \textbf{Cosa fa} \\
+\midrule
+SYS1 & \code{CREATEPROCESS} & Alloca un PCB figlio col dato stato/priorità/support, lo inserisce nell'albero e in \code{activeProcs}. Mette \emph{padre e figlio} in ready queue e richiama lo scheduler (preemption se il figlio è più prioritario). Ritorna il PID in \code{a0}. \\
+SYS2 & \code{TERMPROCESS} & Termina un processo (e ricorsivamente tutti i discendenti). Se \code{a1==0} termina sé stesso, altrimenti cerca per PID. \\
+SYS3 & \code{PASSEREN} (P) & Decrementa il semaforo; se $<0$ blocca il processo. \\
+SYS4 & \code{VERHOGEN} (V) & Incrementa il semaforo; se $\le 0$ sblocca il primo in attesa. \\
+SYS5 & \code{DOIO} & Avvia un'operazione di I/O su un device e \emph{blocca sempre} il processo finché l'interrupt di completamento non lo risveglia (col device status in \code{a0}). \\
+SYS6 & \code{GETTIME} & Ritorna il tempo CPU accumulato dal processo. \\
+SYS7 & \code{CLOCKWAIT} & Blocca il processo fino al prossimo tick dello pseudo-clock (100\,ms). \\
+SYS8 & \code{GETSUPPORTPTR} & Ritorna il puntatore alla support struct del processo. \\
+SYS9 & \code{GETPROCESSID} & Ritorna il PID del processo (o del padre se \code{a1}$\neq$0). \\
+SYS10 & \code{YIELD} & Cede volontariamente la CPU (gestito via \code{yieldedProcess}). \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\paragraph{Protezione.} Una syscall \emph{negativa} chiamata da \emph{user-mode}
+genera un \code{PRIVINSTR} trap (le syscall del Nucleus sono solo per kernel-mode).
+Numeri $\ge 1$ vengono passati su (sono syscall del Support Level).
+
+\paragraph{Contabilità del tempo CPU (\code{updateCPUTime}).} A ogni punto
+critico si calcola $\Delta = \text{TOD}_\text{ora} - \code{startTOD}$, lo si
+somma a \code{p\_time}, e si aggiorna \code{startTOD}. Così nessun ciclo CPU va
+perso o contato due volte, anche con eccezioni annidate.
+
+\paragraph{\code{passUpOrDie} (pass-up-or-die).} Quando il Nucleus \emph{non
+sa} gestire un'eccezione (page fault, program trap):
+\begin{itemize}
+\item se il processo ha una support struct $\to$ \textbf{pass up}: copia lo
+  stato nell'area della support struct e salta all'handler di livello superiore
+  (\code{LDCXT});
+\item altrimenti $\to$ \textbf{die}: termina il processo e i suoi discendenti,
+  poi richiama lo scheduler.
+\end{itemize}
+Questo \textbf{disaccoppia} il Nucleus dalla Phase 3: il kernel non conosce i
+gestori utente, li delega o uccide il processo.
+
+\paragraph{Perché \code{activeProcs}?} La ready queue contiene solo i processi
+\emph{pronti}, non quelli bloccati. Ma \code{TERMPROCESS} per PID deve poter
+trovare anche un processo bloccato, e lo scheduler deve rilevare il deadlock.
+Quindi si tiene un array parallelo di \emph{tutti} i processi vivi. È una
+\textbf{scelta aggiuntiva rispetto alla specifica} (costo $O(\text{MAXPROC})$,
+accettabile dato il limite fisso).
+
+\paragraph{\code{softBlockCount} e \code{isDeviceSemaphore}.} Il contatore conta
+solo i blocchi ``soft'' (attesa di un evento esterno: device o pseudo-clock),
+non i blocchi su semafori di sincronizzazione normali. Serve allo scheduler per
+decidere tra \code{WAIT} (qualcuno aspetta un interrupt) e \code{PANIC}
+(deadlock). \code{isDeviceSemaphore} distingue i due casi.
+
+\subsection{\code{interrupts.c} --- Gestione degli interrupt}
+\code{interruptHandler} legge \code{cause} e distingue tre classi:
+\begin{description}[style=nextline,leftmargin=12pt]
+\item[PLT (ExcCode 7) --- fine time slice] Disarma il PLT
+  (\code{setTIMER(NEVER)}), salva lo stato del processo corrente, lo rimette in
+  ready queue (con interrupt riabilitati al riavvio) e richiama lo scheduler.
+  È il meccanismo della \textbf{preemption}.
+\item[Interval Timer (ExcCode 3) --- pseudo-clock] Riarma il timer
+  (\code{LDIT(PSECOND)}), \emph{sblocca in blocco} tutti i processi in attesa
+  sul semaforo pseudo-clock (ognuno torna in ready queue con \code{a0}=0,
+  \code{softBlockCount}$--$), azzera quel semaforo, poi riprende il processo
+  corrente o schedula.
+\item[Device (ExcCode 17--21) --- linee 3--7] Legge la bitmap dei device
+  pendenti, sceglie quello a priorità più alta (bit meno significativo).
+  \textbf{Salva lo status prima di fare l'ACK} (altrimenti il valore andrebbe
+  perso), poi fa la V sul semaforo del device sbloccando il processo in attesa
+  (gli passa lo status in \code{a0}). Per i \textbf{terminali} (linea 7) TX e RX
+  sono sotto-device separati, gestiti con priorità TX$>$RX per non perdere
+  caratteri.
+\end{description}
+Al termine: se c'è un \code{currentProcess} lo riprende con \code{LDST} (niente
+context switch inutile), altrimenti chiama lo scheduler.
+
+\subsection{Il ciclo di una I/O (\code{DOIO}) --- da raccontare a voce}
+\begin{enumerate}
+\item Il processo chiama \code{DOIO} (SYS5) con l'indirizzo del registro di
+  comando del device e il comando da scrivere.
+\item Il Nucleus calcola \emph{quale semaforo} corrisponde al device, scrive il
+  comando nel registro, fa \code{P} sul semaforo e \textbf{blocca il processo}.
+\item La macchina, non avendo processi pronti, va in \code{WAIT}.
+\item Il device finisce, genera un \textbf{interrupt}. L'handler legge lo
+  status, fa l'ACK, e \code{V} sul semaforo: il processo torna pronto col
+  risultato in \code{a0}.
+\end{enumerate}
+\textbf{Niente race condition:} il Nucleus gira con interrupt disabilitati tra
+l'emissione del comando e il blocco; l'interrupt resta pending finché non si va
+in \code{WAIT}.
+
+% ==================================================================
+\section{Phase 3 --- Support Level (Level 4)}
+% ==================================================================
+
+Costruisce, \emph{usando solo le syscall del Nucleus}, la \textbf{memoria
+virtuale} e i \textbf{processi utente} (U-proc) in user-mode. Tre moduli:
+\code{initProc.c}, \code{vmSupport.c}, \code{sysSupport.c}.
+
+\subsection{Memoria virtuale a paginazione}
+\begin{itemize}
+\item Ogni U-proc gira nel segmento logico \code{kuseg} (da
+  \code{0x80000000}), con un \textbf{ASID} univoco $\in[1,8]$.
+\item Ogni U-proc ha una \textbf{Page Table} privata di 32 entry: pagine 0--30
+  per \code{.text}/\code{.data}, entry 31 per lo \emph{stack} (VPN
+  \code{0xBFFFF}).
+\item All'inizio tutte le pagine sono \emph{non presenti} (\code{V=0}): il primo
+  accesso genera un \textbf{page fault}.
+\end{itemize}
+
+\subsection{Swap Pool e Pager}
+\begin{itemize}
+\item Lo \textbf{Swap Pool} sono 16 frame fisici ($=2\cdot$UPROCMAX) a partire
+  da \code{0x20020000} (dopo i 32 frame riservati all'OS). Una tabella
+  (\code{swap\_t}) dice cosa c'è in ogni frame (ASID, n.\ pagina, PTE).
+\item Un semaforo \code{swapPoolSem} (mutex) protegge la tabella: un solo page
+  fault alla volta.
+\item Il \textbf{backing store} è il device flash: la U-proc con ASID $i$ usa il
+  flash $i-1$. Le pagine vengono lette/scritte da lì.
+\end{itemize}
+
+\paragraph{Il Pager (TLB-Invalid handler).} A ogni page fault: acquisisce
+\code{swapPoolSem}; sceglie un frame con algoritmo \textbf{FIFO} (round-robin);
+se occupato, \emph{sfratta} la pagina vittima (invalida la sua PTE+TLB, la
+scrive sul suo flash); legge la pagina mancante dal flash nel frame; aggiorna
+Swap Pool table e Page Table; rilascia il mutex; riprende la U-proc.
+
+\paragraph{TLB-Refill vs Pager --- distinzione importante.}
+\begin{itemize}
+\item Il \textbf{TLB-Refill} (\code{uTLB\_RefillHandler}, in
+  \code{exceptions.c}) è il \emph{percorso veloce}: la pagina \emph{è già}
+  presente in Page Table ma manca solo nel TLB (cache). Copia l'entry nel TLB
+  e riprende. Non tocca il disco.
+\item Il \textbf{Pager} gestisce il caso \emph{vero} di pagina assente in
+  memoria (\code{V=0}): deve andare sul flash. È costoso.
+\end{itemize}
+
+\subsection{U-proc e syscall utente}
+\begin{itemize}
+\item Le support struct sono in un array statico \code{supportPool[8]},
+  indicizzato per ASID.
+\item Syscall del Support Level (numero \emph{positivo} in \code{a0}): SYS2
+  \code{TERMINATE}, SYS4 \code{WRITETERMINAL}, SYS5 \code{READTERMINAL}, SYS6
+  \code{EXECUTE}. Arrivano al \code{generalExceptionHandler} via
+  \code{passUpOrDie}.
+\end{itemize}
+
+\subsection{La shell interattiva}
+\begin{itemize}
+\item L'\code{InstantiatorProcess} (\code{test}) avvia \emph{una sola} U-proc:
+  la \textbf{shell} (ASID 1). Le altre 7 (\code{fibEight}, \code{echo},
+  \code{fibEleven}, \code{uname}, \code{date}, \code{sl}, \code{calc}) sono
+  lanciate a runtime dalla shell con SYS6 in base al comando digitato.
+\item \textbf{Catena di attesa} (due semafori): la shell si blocca su
+  \code{shellSemaphore} finché la U-proc figlia non termina; l'Instantiator si
+  blocca su \code{masterSemaphore} finché non termina la shell, poi
+  \code{HALT}.
+\item \textbf{Terminazione ordinata} (\code{supTerminate}): prima di morire una
+  U-proc libera i propri frame nello Swap Pool e fa la V sul semaforo giusto
+  (master se è la shell, shell se è una figlia).
+\end{itemize}
+
+% ==================================================================
+\section{Mappa della memoria}
+% ==================================================================
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Indirizzo} & \textbf{Costante} & \textbf{Contenuto} \\
+\midrule
+\code{0x0FFFF000} & \code{BIOSDATAPAGE} & stato salvato dal firmware sulle eccezioni \\
+\code{0x0FFFF900} & \code{PASSUPVECTOR} & vettore degli handler (eccezioni + TLB-Refill) \\
+\code{0x10000000} & --- & registri dei device \\
+\code{0x20000000} & \code{RAMSTART} & inizio RAM; primi 32 frame riservati all'OS \\
+\code{0x20020000} & \code{SWAP\_POOL\_START} & 16 frame dello Swap Pool \\
+\code{ramtop}     & --- & stack handler eccezioni del Nucleus \\
+\code{0x80000000} & \code{KUSEG} & inizio spazio logico delle U-proc \\
+\code{0x800000B0} & \code{UPROCSTARTADDR} & ingresso \code{.text} di una U-proc \\
+\code{0xC0000000} & \code{USERSTACKTOP} & cima dello stack utente \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ==================================================================
+\section{Domande tipiche d'esame}
+% ==================================================================
+
+\qbox{Perché un OS non usa \code{malloc}?}{Per determinismo: niente
+frammentazione, niente attese impreviste, e un tetto noto alle risorse. Tutto è
+preallocato (array statici + free list, $O(1)$).}
+
+\qbox{Differenza tra eccezione e interrupt?}{L'eccezione è sincrona (l'istruzione
+corrente l'ha causata: syscall, page fault); l'interrupt è asincrono (device o
+timer). Si distinguono dal bit 31 del registro \code{cause}.}
+
+\qbox{Cos'è e come funziona la preemption qui?}{Allo scadere del time slice il
+PLT genera un interrupt (ExcCode 7); l'handler salva il processo, lo rimette in
+ready queue e schedula. Così nessun processo monopolizza la CPU.}
+
+\qbox{Cosa fa \code{passUpOrDie}?}{Quando il Nucleus non sa gestire
+un'eccezione: se il processo ha una support struct la passa al livello
+superiore (Phase 3); altrimenti termina il processo e i discendenti. Disaccoppia
+il kernel dai gestori utente.}
+
+\qbox{Perché serve \code{softBlockCount}?}{Per distinguere, quando la ready queue
+è vuota, il caso ``qualcuno aspetta un interrupt'' ($\to$ \code{WAIT}) dal caso
+``deadlock'' ($\to$ \code{PANIC}). Conta solo i blocchi su device/pseudo-clock.}
+
+\qbox{Perché \code{DOIO} blocca sempre il processo?}{Perché l'I/O è asincrona:
+si conclude con un interrupt di completamento. Il processo deve aspettare quel
+risultato. Non c'è race perché il Nucleus gira con interrupt disabilitati tra
+emissione comando e blocco.}
+
+\qbox{Differenza tra TLB-Refill e Pager?}{Il TLB-Refill ricarica nel TLB
+un'entry \emph{già presente} in Page Table (veloce, niente disco). Il Pager
+gestisce una pagina \emph{assente} in memoria: la legge dal flash, eventualmente
+sfrattando un'altra pagina (lento).}
+
+\qbox{Come si sceglie la pagina vittima?}{Algoritmo \textbf{FIFO} (round-robin
+sui 16 frame dello Swap Pool): semplice, $O(1)$, ammesso dalla specifica.}
+
+\qbox{Perché due semafori (master e shell) in Phase 3?}{Per la catena di attesa:
+una U-proc figlia sblocca la shell; la shell (al termine) sblocca
+l'Instantiator, che a quel punto fa \code{HALT}. Separarli rende esplicito chi
+aspetta chi.}
+
+\qbox{Perché lo stack degli handler è in cima alla RAM?}{Per isolare i due
+handler (eccezioni e TLB-Refill) su frame separati: con un unico stack, due
+eccezioni annidate si sovrascriverebbero a vicenda.}
+
+\qbox{Cosa succede a sistema ``finito''?}{Quando \code{processCount} arriva a 0
+lo scheduler chiama \code{HALT}: la shell termina $\to$ V su master $\to$
+l'Instantiator fa \code{TERMPROCESS} su di sé $\to$ \code{processCount}=0 $\to$
+\code{HALT}.}
+
+\end{document}
