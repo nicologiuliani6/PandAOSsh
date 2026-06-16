@@ -405,9 +405,10 @@ Swap Pool table e Page Table; rilascia il mutex; riprende la U-proc.
 \subsection{La shell interattiva}
 \begin{itemize}
 \item L'\code{InstantiatorProcess} (\code{test}) avvia \emph{una sola} U-proc:
-  la \textbf{shell} (ASID 1). Le altre 7 (\code{fibEight}, \code{echo},
-  \code{fibEleven}, \code{uname}, \code{date}, \code{sl}, \code{calc}) sono
-  lanciate a runtime dalla shell con SYS6 in base al comando digitato.
+  la \textbf{shell} (ASID 1). Le altre 5 (\code{echo}, \code{fibEleven},
+  \code{uname}, \code{sl}, \code{calc}) sono lanciate a runtime dalla shell con
+  SYS6 in base al comando digitato. La mappatura nome$\to$ASID è statica in
+  \code{shell.c}; ogni ASID~$i$ usa il device flash~$i-1$ come backing store.
 \item \textbf{Catena di attesa} (due semafori): la shell si blocca su
   \code{shellSemaphore} finché la U-proc figlia non termina; l'Instantiator si
   blocca su \code{masterSemaphore} finché non termina la shell, poi
@@ -415,6 +416,66 @@ Swap Pool table e Page Table; rilascia il mutex; riprende la U-proc.
 \item \textbf{Terminazione ordinata} (\code{supTerminate}): prima di morire una
   U-proc libera i propri frame nello Swap Pool e fa la V sul semaforo giusto
   (master se è la shell, shell se è una figlia).
+\end{itemize}
+
+\subsection{\code{crtsi.S} --- startup delle U-proc (codice assembly)}
+\begin{itemize}
+\item Ogni programma utente in \code{testers/} viene linkato con \code{crtsi.S}
+  (più \code{liburiscv.S}): è il \emph{C runtime startup}, l'equivalente per le
+  U-proc del \code{crtso.S} usato dal kernel. Definisce il simbolo
+  \code{\_\_start}, posto dal linker a \code{0x800000B0}
+  (\code{UPROCSTARTADDR}): è lì che la SYS1 fa partire il PC, \emph{non} su
+  \code{main}.
+\item Fa il minimo indispensabile prima di \code{main}:
+  \begin{enumerate}
+  \item carica il \textbf{global pointer} \code{gp} dal valore salvato
+    nell'header \code{.aout} (accesso alle variabili globali);
+  \item alloca un piccolo frame sullo stack (lo \code{sp} è già inizializzato
+    dal kernel a \code{0xC0000000}) e chiama \code{jal main};
+  \end{enumerate}
+\item Se \code{main} ritorna, mette \code{a0 = 2} (\code{TERMINATE\_SYSCALL}) ed
+  esegue \code{ecall}: cioè una \textbf{SYS2} che fa terminare la U-proc in modo
+  pulito. Senza questo, il ritorno da \code{main} salterebbe a un indirizzo
+  casuale. (La shell non sfrutta questa via: ha un loop infinito e termina solo
+  col comando \code{exit}.)
+\item \emph{Da dire a voce}: \code{crtsi.S} è codice utente, gira in user-mode;
+  il kernel garantisce solo PC e SP iniziali, tutto il resto del setup è qui.
+\end{itemize}
+
+\subsection{Compilazione: da \code{.c} a device flash}
+\begin{itemize}
+\item Ci sono \textbf{due build distinte}:
+  \begin{enumerate}
+  \item Il \textbf{kernel} (core): \code{make phase3} (CMake) compila il Nucleus
+    + Support Level e produce \code{MultiPandOS.core.uriscv} (header \code{.core},
+    linker script \code{uriscvcore.ldscript}). È il file caricato come
+    \code{core-file} in \code{phase3\_config\_machine.json}.
+  \item Le \textbf{U-proc} di test: il \code{Makefile} in \code{testers/} produce
+    un'immagine \textbf{flash} \code{.uriscv} per ogni programma. (Il target
+    \code{phase3} richiama anche questo \code{make} per tenerle allineate.)
+  \end{enumerate}
+\item Pipeline di una U-proc (per ogni \code{name.c}):
+  \begin{enumerate}
+  \item \code{name.c} $\to$ \code{name.o} (compilazione, \code{-ffreestanding
+    -nostdlib});
+  \item \textbf{link}: \code{name.o + crtsi.o + liburiscv.o} con il linker script
+    \code{uriscvaout.ldscript} $\to$ \code{name.elf}. È qui che \code{crtsi.S}
+    entra e \code{\_\_start} finisce a \code{0x800000B0};
+  \item \code{uriscv-elf2uriscv -a} $\to$ \code{name.elf.aout.uriscv}: converte
+    l'ELF nel formato \textbf{\code{.aout}} (load image) atteso dalla macchina;
+  \item \code{uriscv-mkdev -f name.uriscv \dots} $\to$ \textbf{immagine flash}
+    \code{name.uriscv}: precarica il \code{.aout} su un device flash virtuale.
+  \end{enumerate}
+\item \textbf{Layout del flash} (backing store della U-proc): blocchi
+  \code{0..30} = pagine \code{.text}/\code{.data}, blocco \code{31} = pagina di
+  stack. Coincide con le 32 entry della Page Table.
+\item \textbf{Mappatura} in \code{phase3\_config\_machine.json}: ogni device
+  \code{flashN} punta a un \code{testers/*.uriscv}. La U-proc con ASID~$i$ legge
+  il flash~$i-1$ (vedi \code{flashOperation}: \code{devNo = asid - 1}). Quindi
+  \code{flash0}=shell, \code{flash1}=echo, \dots
+\item \emph{Da dire a voce}: il flash \textbf{non} è un filesystem: è il backing
+  store grezzo di \emph{una} U-proc. Il Pager lo legge a domanda (page fault) e
+  ci riscrive le pagine \emph{dirty} sfrattate.
 \end{itemize}
 
 % ==================================================================

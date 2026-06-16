@@ -19,9 +19,9 @@ LDFLAGS = -nostdlib -nostartfiles -march=rv32imafd -mabi=ilp32d \
 
 # Elenco dei programmi U-proc (un .c per programma).
 # Mappatura nome -> ASID -> flash device (vedi shell.c e config macchina):
-#   shell=1/flash0  fibEight=2/flash1  echo=3/flash2  fibEleven=4/flash3
-#   uname=5/flash4  date=6/flash5      sl=7/flash6     calc=8/flash7
-PROGS = shell fibEight echo fibEleven uname date sl calc
+#   shell=1/flash0  echo=2/flash1  fibEleven=3/flash2
+#   uname=4/flash3  sl=5/flash4    calc=6/flash5
+PROGS = shell echo fibEleven uname sl calc
 
 # Immagini flash risultanti.
 FLASHES = $(PROGS:%=%.uriscv)

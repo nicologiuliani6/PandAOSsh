@@ -12,31 +12,31 @@
         },
         "flash1": {
             "enabled": true,
-            "file": "testers/fibEight.uriscv"
+            "file": "testers/echo.uriscv"
         },
         "flash2": {
             "enabled": true,
-            "file": "testers/echo.uriscv"
+            "file": "testers/fibEleven.uriscv"
         },
         "flash3": {
             "enabled": true,
-            "file": "testers/fibEleven.uriscv"
+            "file": "testers/uname.uriscv"
         },
         "flash4": {
             "enabled": true,
-            "file": "testers/uname.uriscv"
+            "file": "testers/sl.uriscv"
         },
         "flash5": {
             "enabled": true,
-            "file": "testers/date.uriscv"
+            "file": "testers/calc.uriscv"
         },
         "flash6": {
-            "enabled": true,
-            "file": "testers/sl.uriscv"
+            "enabled": false,
+            "file": ""
         },
         "flash7": {
-            "enabled": true,
-            "file": "testers/calc.uriscv"
+            "enabled": false,
+            "file": ""
         },
         "terminal0": {
             "enabled": true,

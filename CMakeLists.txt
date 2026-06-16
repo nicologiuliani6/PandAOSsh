@@ -95,7 +95,9 @@ add_custom_target(phase3
         ${PROJECT_BINARY_DIR}/MultiPandOS_phase3
         ${PROJECT_BINARY_DIR}/MultiPandOS
     COMMAND uriscv-elf2uriscv -k ${PROJECT_BINARY_DIR}/MultiPandOS
+    # Compila anche le U-proc di test (immagini flash .uriscv) in testers/
+    COMMAND ${CMAKE_MAKE_PROGRAM} -C ${CMAKE_SOURCE_DIR}/testers
     BYPRODUCTS MultiPandOS.core.uriscv MultiPandOS.stab.uriscv
     DEPENDS MultiPandOS_phase3
-    COMMENT ">>> Build Phase 3 - carica phase3_config_machine.json nell'emulatore"
+    COMMENT ">>> Build Phase 3 - core + U-proc testers, carica phase3_config_machine.json"
 )

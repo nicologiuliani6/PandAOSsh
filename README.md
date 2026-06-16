@@ -55,13 +55,11 @@ Una `shell` interattiva (ASID 1) legge un nome di programma dal terminale, lo tr
 | comando | ASID | flash |
 |---------|------|-------|
 | `shell` | 1 | flash0 |
-| `fibEight` | 2 | flash1 |
-| `echo` | 3 | flash2 |
-| `fibEleven` | 4 | flash3 |
-| `uname` | 5 | flash4 |
-| `date` | 6 | flash5 |
-| `sl` | 7 | flash6 |
-| `calc` | 8 | flash7 |
+| `echo` | 2 | flash1 |
+| `fibEleven` | 3 | flash2 |
+| `uname` | 4 | flash3 |
+| `sl` | 5 | flash4 |
+| `calc` | 6 | flash5 |
 
 ---
 
@@ -137,7 +135,7 @@ Esempio di sessione nel terminale:
 
 ```
 PandOSsh shell
-comandi: fibEight echo fibEleven uname date sl calc | exit
+comandi: echo fibEleven uname sl calc | exit
 > calc
 calc: inserisci <cifra><op><cifra> (es. 7*8): 7*8
 calc: risultato = 56
