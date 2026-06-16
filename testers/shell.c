@@ -8,13 +8,11 @@
  *
  * Mappatura statica nome -> ASID (ciascun programma ha il proprio flash
  * device precaricato col suo backing store), come da configurazione macchina:
- *   fibEight  -> ASID 2 (flash1)
- *   echo      -> ASID 3 (flash2)
- *   fibEleven -> ASID 4 (flash3)
- *   uname     -> ASID 5 (flash4)
- *   date      -> ASID 6 (flash5)
- *   sl        -> ASID 7 (flash6)
- *   calc      -> ASID 8 (flash7)
+ *   echo -> ASID 2 (flash2)
+ *   fibEleven -> ASID 3 (flash3)
+ *   uname -> ASID 4 (flash4)
+ *   sl -> ASID 5 (flash5)
+ *   calc -> ASID 6 (flash6)
  */
 #include "h/libuser.h"
 
@@ -25,13 +23,11 @@ static int u_strcmp(const char *a, const char *b) {
 
 /* Mappatura statica nome programma -> ASID. -1 se sconosciuto. */
 static int nameToAsid(const char *name) {
-    if (u_strcmp(name, "fibEight")  == 0) return 2;
-    if (u_strcmp(name, "echo")      == 0) return 3;
-    if (u_strcmp(name, "fibEleven") == 0) return 4;
-    if (u_strcmp(name, "uname")     == 0) return 5;
-    if (u_strcmp(name, "date")      == 0) return 6;
-    if (u_strcmp(name, "sl")        == 0) return 7;
-    if (u_strcmp(name, "calc")      == 0) return 8;
+    if (u_strcmp(name, "echo")      == 0) return 2;
+    if (u_strcmp(name, "fibEleven") == 0) return 3;
+    if (u_strcmp(name, "uname")     == 0) return 4;
+    if (u_strcmp(name, "sl")        == 0) return 5;
+    if (u_strcmp(name, "calc")      == 0) return 6;
     return -1;
 }
 
@@ -39,7 +35,7 @@ void main(void) {
     char buf[128];
 
     u_print("PandOSsh shell\n");
-    u_print("comandi: fibEight echo fibEleven uname date sl calc | exit\n");
+    u_print("comandi: echo fibEleven uname sl calc | exit\n");
 
     while (1) {
         u_print("> ");
