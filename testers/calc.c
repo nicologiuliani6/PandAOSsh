@@ -1,13 +1,9 @@
-/*
- * calc.c - calcolatrice richiesta dalla specifica Phase 3 (Sez. 11).
- *
+/* calc.c - calcolatrice richiesta dalla specifica Phase 3 (Sez. 11).
  * Legge dal terminale una espressione del tipo <cifra><op><cifra>
- * (es. "7*8"), con op in { +, -, *, / } e cifre singole, e stampa il
- * risultato.
- */
+ * (es. "7*8"), con op in { +, -, *, / } e cifre singole, e stampa il risultato.*/
 #include "h/libuser.h"
 
-/* Converte un intero (anche negativo) in stringa. */
+/* Converte un intero in stringa. */
 static void itoa(int v, char *out) {
     char tmp[16];
     int  i = 0, j = 0;

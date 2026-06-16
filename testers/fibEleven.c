@@ -1,4 +1,4 @@
-/* fibEleven.c - calcola e stampa l'undicesimo numero di Fibonacci. */
+/* fibEleven.c -> calcola e stampa l'undicesimo numero di Fibonacci. */
 #include "h/libuser.h"
 
 static int fib(int n) {

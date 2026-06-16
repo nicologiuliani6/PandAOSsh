@@ -1,4 +1,4 @@
-/* echo.c - legge una riga dal terminale e la ristampa. */
+/* echo.c -> legge una riga dal terminale e la ristampa. */
 #include "h/libuser.h"
 
 void main(void) {

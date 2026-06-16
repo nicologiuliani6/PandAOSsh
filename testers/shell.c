@@ -1,7 +1,6 @@
 /*
- * shell.c - shell interattiva richiesta dalla specifica Phase 3 (Sez. 11).
- *
- * E' la U-proc lanciata direttamente dall'InstantiatorProcess (ASID 1).
+ * shell.c -> shell interattiva richiesta dalla specifica Phase 3 (Sez. 11).
+ * è la U-proc lanciata direttamente dall'InstantiatorProcess (ASID 1).
  * Legge un nome di programma dal terminale, lo traduce in un ASID tramite
  * una mappatura statica e lo esegue con la SYS6 (Execute), bloccandosi fino
  * alla terminazione del programma figlio. Il comando "exit" conclude la

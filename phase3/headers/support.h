@@ -16,9 +16,7 @@
 #include <uriscv/arch.h>
 #include <uriscv/cpu.h>
 
-/* ------------------------------------------------------------------ */
-/* Costanti del Support Level                                          */
-/* ------------------------------------------------------------------ */
+/* Costanti del Support Level*/
 
 /* Inizio dello Swap Pool: subito dopo i primi 32 frame riservati al SO
  * (0x20000000 + 32 * 4096 = 0x20020000). */
@@ -55,11 +53,9 @@
 /* Lunghezza massima di una stringa scrivibile su terminale (SYS4). */
 #define MAXSTRLEN 128
 
-/* ------------------------------------------------------------------ */
 /* Semafori di mutua esclusione sui device (uno per sotto-device)      */
 /* Layout: [0..39] i 5*8 device "principali", [40..47] il secondo      */
 /* sotto-device dei terminali (ricezione).                             */
-/* ------------------------------------------------------------------ */
 #define DEVCNT            (DEVINTNUM * DEVPERINT)        /* 40 */
 #define DEV_MUTEX_TOTAL   (DEVCNT + DEVPERINT)           /* 48 */
 
@@ -68,9 +64,7 @@
 #define TERMW_MUTEX(dev)    (((IL_TERMINAL - IL_DISK) * DEVPERINT) + (dev))
 #define TERMR_MUTEX(dev)    (DEVCNT + (dev))
 
-/* ------------------------------------------------------------------ */
 /* Variabili globali del Support Level                                 */
-/* ------------------------------------------------------------------ */
 
 /* Semaforo di mutua esclusione sullo Swap Pool (init 1). */
 extern int swapPoolSem;
@@ -88,9 +82,7 @@ extern int devMutex[DEV_MUTEX_TOTAL];
 /* Pool delle support structure (una per U-proc, indicizzata da ASID-1). */
 extern support_t supportPool[UPROCMAX];
 
-/* ------------------------------------------------------------------ */
 /* Prototipi                                                           */
-/* ------------------------------------------------------------------ */
 
 /* initProc.c */
 extern void test(void);                 /* InstantiatorProcess */

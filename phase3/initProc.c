@@ -10,26 +10,20 @@
 
 #include "headers/support.h"
 
-/* ------------------------------------------------------------------ */
-/* Variabili globali del Support Level                                 */
-/* ------------------------------------------------------------------ */
+/* Variabili globali del Support Level*/
 
 int       masterSemaphore;            /* fine InstantiatorProcess (init 0) */
 int       shellSemaphore;             /* attesa figlio nella SYS6 (init 0)  */
 int       devMutex[DEV_MUTEX_TOTAL];  /* mutua esclusione sui device        */
 support_t supportPool[UPROCMAX];      /* una support struct per U-proc      */
 
-/* ------------------------------------------------------------------ */
-/* Support structure pool                                              */
-/* ------------------------------------------------------------------ */
+/* Support structure pool*/
 
 support_t *getSupport(int asid) {
     return &supportPool[asid - 1];
 }
 
-/* ------------------------------------------------------------------ */
-/* Avvio di una U-proc                                                 */
-/* ------------------------------------------------------------------ */
+/* Avvio di una U-proc*/
 
 void launchUproc(int asid) {
     support_t *sup = getSupport(asid);
@@ -39,8 +33,8 @@ void launchUproc(int asid) {
     initUprocPageTable(sup);
 
     /* Context per la gestione delle eccezioni passate su dal Nucleus.
-     *  [PGFAULTEXCEPT] -> il Pager (TLB exception handler)
-     *  [GENERALEXCEPT] -> il general exception handler                 */
+     *  [PGFAULTEXCEPT] : il Pager (TLB exception handler)
+     *  [GENERALEXCEPT] : il general exception handler                 */
     sup->sup_exceptContext[PGFAULTEXCEPT].pc       = (memaddr) pager;
     sup->sup_exceptContext[PGFAULTEXCEPT].status   = SUPPORT_STATUS;
     sup->sup_exceptContext[PGFAULTEXCEPT].stackPtr =
@@ -66,9 +60,7 @@ void launchUproc(int asid) {
     SYSCALL(CREATEPROCESS, (int)&s, PROCESS_PRIO_LOW, (int)sup);
 }
 
-/* ------------------------------------------------------------------ */
-/* InstantiatorProcess (test)                                          */
-/* ------------------------------------------------------------------ */
+/* InstantiatorProcess (test) */
 
 void test(void) {
     /* 1. Strutture dati della memoria virtuale (Swap Pool + semaforo). */

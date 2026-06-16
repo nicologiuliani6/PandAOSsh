@@ -9,13 +9,9 @@
  */
 
 #include "headers/support.h"
-
-/* ------------------------------------------------------------------ */
-/* Terminazione ordinata di una U-proc                                 */
-/* ------------------------------------------------------------------ */
-
+/* Terminazione ordinata di una U-proc*/
 void supTerminate(int asid) {
-    /* Libera i frame dello Swap Pool occupati da questa U-proc, così da
+    /* Libera i frame dello Swap Pool occupati da questa U-proc, per
      * evitare scritture spurie sul backing store in futuro. */
     SYSCALL(PASSEREN, (int)&swapPoolSem, 0, 0);
     for (int i = 0; i < SWAP_POOL_SIZE; i++)
@@ -24,8 +20,8 @@ void supTerminate(int asid) {
     SYSCALL(VERHOGEN, (int)&swapPoolSem, 0, 0);
 
     /* Sblocca chi attende la conclusione di questa U-proc:
-     *  - la shell (ASID 1)  -> InstantiatorProcess via masterSemaphore
-     *  - una U-proc figlia  -> la shell via shellSemaphore                */
+     *  la shell (ASID 1): InstantiatorProcess via masterSemaphore
+     *  una U-proc figlia: la shell via shellSemaphore                */
     if (asid == 1)
         SYSCALL(VERHOGEN, (int)&masterSemaphore, 0, 0);
     else
@@ -35,10 +31,7 @@ void supTerminate(int asid) {
     SYSCALL(TERMPROCESS, 0, 0, 0);
 }
 
-/* ------------------------------------------------------------------ */
-/* SYS4 - WriteTerminal                                                */
-/* ------------------------------------------------------------------ */
-
+/* SYS4 - WriteTerminal*/
 static int writeTerminal(support_t *sup, char *virtAddr, int len) {
     /* Validazione: indirizzo dentro lo spazio logico, lunghezza valida. */
     if ((memaddr)virtAddr < KUSEG || (memaddr)virtAddr >= USERSTACKTOP ||
@@ -67,9 +60,7 @@ static int writeTerminal(support_t *sup, char *virtAddr, int len) {
     return i;
 }
 
-/* ------------------------------------------------------------------ */
-/* SYS5 - ReadTerminal                                                 */
-/* ------------------------------------------------------------------ */
+/* SYS5 - ReadTerminal */
 
 static int readTerminal(support_t *sup, char *virtAddr) {
     if ((memaddr)virtAddr < KUSEG || (memaddr)virtAddr >= USERSTACKTOP) {
@@ -100,9 +91,7 @@ static int readTerminal(support_t *sup, char *virtAddr) {
     return count;
 }
 
-/* ------------------------------------------------------------------ */
-/* SYS6 - Execute (spawn di una nuova U-proc; usato dalla shell)        */
-/* ------------------------------------------------------------------ */
+/* SYS6 - Execute (spawn di una nuova U-proc; usato dalla shell) */
 
 static int doExecute(int asid) {
     if (asid < 1 || asid > UPROCMAX)
@@ -113,9 +102,7 @@ static int doExecute(int asid) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* SYSCALL Handler                                                     */
-/* ------------------------------------------------------------------ */
+/* SYSCALL Handler*/
 
 static void supSyscallHandler(support_t *sup, state_t *state) {
     int number = (int)state->reg_a0;
@@ -151,9 +138,7 @@ static void supSyscallHandler(support_t *sup, state_t *state) {
     LDST(state);
 }
 
-/* ------------------------------------------------------------------ */
-/* General Exception Handler                                           */
-/* ------------------------------------------------------------------ */
+/* General Exception Handler*/
 
 void generalExceptionHandler(void) {
     support_t *sup   = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
@@ -165,7 +150,7 @@ void generalExceptionHandler(void) {
         /* ECALL da user-mode: è una SYSCALL del Support Level. */
         supSyscallHandler(sup, state);
     } else {
-        /* Qualsiasi altra eccezione: program trap -> terminazione. */
+        /* Qualsiasi altra eccezione: program trap: terminazione. */
         supTerminate(sup->sup_asid);
     }
 }

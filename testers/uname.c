@@ -1,4 +1,4 @@
-/* uname.c - stampa il nome del sistema operativo. */
+/* uname.c -> stampa il nome del sistema operativo. */
 #include "h/libuser.h"
 
 void main(void) {

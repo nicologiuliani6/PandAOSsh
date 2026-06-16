@@ -10,18 +10,14 @@
 
 #include "headers/support.h"
 
-/* ------------------------------------------------------------------ */
-/* Variabili globali della memoria virtuale                            */
-/* ------------------------------------------------------------------ */
+/* Variabili globali della memoria virtuale*/
 int    swapPoolSem;
 swap_t swapPool[SWAP_POOL_SIZE];
 
-/* Indice FIFO per l'algoritmo di rimpiazzo pagine (round robin). */
+/* Indice FIFO per l'algoritmo di rimpiazzo pagine (round robin).*/
 static int fifoNext = 0;
 
-/* ------------------------------------------------------------------ */
-/* Utility                                                             */
-/* ------------------------------------------------------------------ */
+/* Utility*/
 
 /* Abilita/disabilita gli interrupt per rendere atomico l'aggiornamento
  * combinato di Page Table + TLB. */
@@ -44,12 +40,12 @@ static int vpnToIndex(unsigned int entryHI) {
     return -1;
 }
 
-/* Indirizzo fisico del frame i dello Swap Pool. */
+/* Indirizzo fisico del frame i dello Swap Pool.*/
 static inline memaddr frameAddr(int i) {
     return (memaddr)(SWAP_POOL_START + i * PAGESIZE);
 }
 
-/* Invalida un'entry di Page Table e azzera il TLB in modo atomico. */
+/* Invalida un'entry di Page Table e azzera il TLB in modo atomico.*/
 static void markPageNotValid(pteEntry_t *pte) {
     interruptsOff();
     pte->pte_entryLO &= ~VALIDON;
@@ -73,10 +69,7 @@ static void markPagePresent(pteEntry_t *pte, memaddr phys) {
     interruptsOn();
 }
 
-/* ------------------------------------------------------------------ */
-/* Inizializzazione                                                    */
-/* ------------------------------------------------------------------ */
-
+/* Inizializzazione*/                                                    
 void initSwapStructs(void) {
     swapPoolSem = 1;
     fifoNext    = 0;
@@ -97,13 +90,11 @@ void initUprocPageTable(support_t *sup) {
     sup->sup_privatePgTbl[UPROC_STACKPAGE].pte_entryLO = DIRTYON;
 }
 
-/* ------------------------------------------------------------------ */
-/* Backing store (device flash)                                        */
-/* ------------------------------------------------------------------ */
+/* Backing store (device flash)*/
 
 /* Esegue una operazione (FLASHREAD/FLASHWRITE) sul device flash della
  * U-proc identificata da asid, sul blocco blockNo, usando frameAddr come
- * sorgente/destinazione DMA. Ritorna lo status del device. */
+ * sorgente/destinazione DMA. Ritorna lo status del device.*/
 int flashOperation(int asid, int blockNo, memaddr frameAddr_, int op) {
     int        devNo = asid - 1;
     dtpreg_t  *flash = (dtpreg_t *) DEV_REG_ADDR(IL_FLASH, devNo);
@@ -113,7 +104,7 @@ int flashOperation(int asid, int blockNo, memaddr frameAddr_, int op) {
     SYSCALL(PASSEREN, (int)&devMutex[mutex], 0, 0);
 
     flash->data0 = frameAddr_;
-    /* numero blocco nei 3 byte alti, comando nel byte basso */
+    /* numero blocco nei 3 byte alti, comando nel byte basso*/
     unsigned int command = ((unsigned int)blockNo << 8) | op;
     status = SYSCALL(DOIO, (int)&flash->command, (int)command, 0);
 
@@ -121,9 +112,7 @@ int flashOperation(int asid, int blockNo, memaddr frameAddr_, int op) {
     return (int)status;
 }
 
-/* ------------------------------------------------------------------ */
-/* Il Pager                                                            */
-/* ------------------------------------------------------------------ */
+/*Pager*/
 
 void pager(void) {
     support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
@@ -132,19 +121,19 @@ void pager(void) {
     unsigned int excCode = exState->cause & CAUSE_EXCCODE_MASK;
 
     /* TLB-Modification: una pagina marcata read-only è stata scritta.
-     * In PandOSsh non dovrebbe accadere: trattalo come program trap. */
+     * In PandOSsh non dovrebbe accadere: trattalo come program trap.*/
     if (excCode == EXC_MOD) {
         supTerminate(sup->sup_asid);
         return;
     }
 
-    /* Mutua esclusione sullo Swap Pool. */
+    /* Mutua esclusione sullo Swap Pool.*/
     SYSCALL(PASSEREN, (int)&swapPoolSem, 0, 0);
 
     /* Pagina mancante. */
     int p = vpnToIndex(exState->entry_hi);
     if (p < 0) {
-        /* Indirizzo fuori dallo spazio logico: program trap. */
+        /* Indirizzo fuori dallo spazio logico: program trap.*/
         SYSCALL(VERHOGEN, (int)&swapPoolSem, 0, 0);
         supTerminate(sup->sup_asid);
         return;
@@ -173,7 +162,7 @@ void pager(void) {
         }
     }
 
-    /* Legge la pagina p della U-proc corrente dal suo backing store. */
+    /* Legge la pagina p della U-proc corrente dal suo backing store.*/
     int st = flashOperation(sup->sup_asid, p, fa, FLASHREAD);
     if (st != READY) {
         SYSCALL(VERHOGEN, (int)&swapPoolSem, 0, 0);
@@ -181,15 +170,15 @@ void pager(void) {
         return;
     }
 
-    /* Aggiorna la Swap Pool table per il frame i. */
+    /* Aggiorna la Swap Pool table per il frame i.*/
     swapPool[i].sw_asid   = sup->sup_asid;
     swapPool[i].sw_pageNo = p;
     swapPool[i].sw_pte    = &sup->sup_privatePgTbl[p];
 
-    /* Aggiorna Page Table + TLB della U-proc corrente (atomico). */
+    /* Aggiorna Page Table + TLB della U-proc corrente (atomico).*/
     markPagePresent(&sup->sup_privatePgTbl[p], fa);
 
-    /* Rilascia la mutua esclusione e riprende la U-proc. */
+    /* Rilascia la mutua esclusione e riprende la U-proc.*/
     SYSCALL(VERHOGEN, (int)&swapPoolSem, 0, 0);
     LDST(exState);
 }
