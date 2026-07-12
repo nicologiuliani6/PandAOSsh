@@ -1,0 +1,1442 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[italian]{babel}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{codebg}{rgb}{0.96,0.96,0.96}
+\definecolor{kw}{rgb}{0.0,0.2,0.6}
+\definecolor{cmt}{rgb}{0.3,0.5,0.3}
+
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  backgroundcolor=\color{codebg},
+  keywordstyle=\color{kw}\bfseries,
+  commentstyle=\color{cmt}\itshape,
+  frame=single,
+  framesep=4pt,
+  breaklines=true,
+  showstringspaces=false,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  language=C,
+  tabsize=4
+}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\func}[1]{\textbf{\texttt{#1}}}
+
+
+\titleformat{\section}{\large\bfseries\color{kw}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\itshape}{\thesubsubsection}{0.6em}{}
+
+\setlist{itemsep=1pt,topsep=2pt}
+
+\title{\textbf{PandOSsh --- Fase 1}\\[2pt]
+\large Le strutture dati di base: liste, PCB e ASL\\
+\normalsize Guida dettagliata riga per riga, funzione per funzione}
+\author{Materiale di studio per l'interrogazione}
+\date{A.A. 2025/2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section{Introduzione generale alla Fase 1}
+% ============================================================
+
+La \textbf{Phase 1} di PandOSsh non è ancora un sistema operativo: non
+esistono scheduler, non esistono eccezioni gestite, non gira nulla in
+autonomia. È il livello più basso costruito \emph{sopra} il firmware
+dell'emulatore $\mu$RISCV (che fa da BIOS), e fornisce esclusivamente
+\textbf{strutture dati di servizio} che i livelli superiori (Nucleus in
+Phase~2, Support Level in Phase~3) utilizzeranno per implementare i concetti
+di processo, sincronizzazione e scheduling.
+
+Il codice della Fase 1 è interamente contenuto in due moduli:
+
+\begin{itemize}
+\item \code{phase1/pcb.c} --- gestione dei \textbf{Process Control Block}
+  (PCB): allocazione/deallocazione, code di processi, albero dei processi.
+\item \code{phase1/asl.c} --- gestione della \textbf{Active Semaphore List}
+  (ASL): la struttura che tiene traccia di quali processi sono bloccati su
+  quale semaforo.
+\end{itemize}
+
+Entrambi i moduli si appoggiano a una libreria di liste concatenate generica
+(\code{headers/listx.h}, un sottoinsieme delle liste del kernel Linux) e alle
+definizioni di tipo in \code{headers/types.h}.
+
+\paragraph{Principio cardine: niente allocazione dinamica.}
+In tutta la Fase 1 (e in tutto il progetto) non compare mai \code{malloc}.
+Il numero massimo di processi (\code{MAXPROC}, 20) e di semafori attivi è
+fissato a tempo di compilazione: tutte le strutture sono array statici,
+gestiti tramite \emph{free list}. Questo è un requisito tipico dei sistemi
+operativi ``didattici in stile Pandos'': un kernel deve avere un
+comportamento \textbf{deterministico}, senza frammentazione della memoria e
+senza il rischio che un'allocazione fallisca in un momento critico.
+
+\paragraph{Perché liste doppiamente concatenate circolari?}
+Sia i PCB sia i semafori attivi sono organizzati con la stessa tecnica: una
+\code{struct list\_head} embedded nella struttura dati, gestita con le
+funzioni generiche di \code{listx.h}. I vantaggi:
+\begin{itemize}
+\item inserimento e rimozione in $O(1)$, qualunque sia la posizione (testa,
+  coda, elemento intermedio);
+\item nessun caso speciale per lista vuota o con un solo elemento (la
+  sentinella \code{head} è essa stessa un nodo, quindi il codice che
+  manipola \code{next}/\code{prev} è identico in ogni caso);
+\item una stessa struttura (es. \code{pcb\_t}) può appartenere
+  contemporaneamente a più liste diverse (free list, ready queue, coda di un
+  semaforo, lista dei figli...) semplicemente avendo più campi
+  \code{list\_head}.
+\end{itemize}
+
+% ============================================================
+\section{\code{headers/types.h} --- i tipi di dato fondamentali}
+% ============================================================
+
+Questo header definisce \emph{tutte} le strutture dati condivise da tutto il
+progetto (non solo dalla Fase 1). È importante conoscerle a menadito perché
+compaiono ovunque nel resto del kernel.
+
+\begin{lstlisting}
+typedef signed int cpu_t;
+typedef unsigned int memaddr;
+
+/* Page Table Entry descriptor */
+typedef struct pteEntry_t
+{
+    unsigned int pte_entryHI;
+    unsigned int pte_entryLO;
+} pteEntry_t;
+
+/* Support level context */
+typedef struct context_t
+{
+    unsigned int stackPtr;
+    unsigned int status;
+    unsigned int pc;
+} context_t;
+
+/* Support level descriptor */
+typedef struct support_t
+{
+    int sup_asid;
+    state_t sup_exceptState[2];
+    context_t sup_exceptContext[2];
+    pteEntry_t sup_privatePgTbl[USERPGTBLSIZE];
+    unsigned int sup_stackTLB[500];
+    unsigned int sup_stackGen[500];
+    struct list_head s_list;
+} support_t;
+
+/* Page swap pool information structure type */
+typedef struct swap_t
+{
+    int sw_asid;
+    int sw_pageNo;
+    pteEntry_t *sw_pte;
+} swap_t;
+
+/* process table entry type */
+typedef struct pcb_t {
+    struct list_head p_list;
+
+    struct pcb_t    *p_parent;
+    struct list_head p_child;
+    struct list_head p_sib;
+
+    state_t p_s;
+    cpu_t   p_time;
+
+    int *p_semAdd;
+    support_t *p_supportStruct;
+
+    int p_prio;
+    int p_pid;
+} pcb_t, *pcb_PTR;
+
+/* semaphore descriptor (SEMD) data structure */
+typedef struct semd_t {
+    int *s_key;
+    struct list_head s_procq;
+    struct list_head s_link;
+} semd_t, *semd_PTR;
+\end{lstlisting}
+
+\subsection{\code{cpu\_t} e \code{memaddr}}
+Due semplici \code{typedef} per rendere il codice autodocumentante:
+\code{cpu\_t} (int con segno) misura quantità di tempo CPU (letto dal TOD,
+il Time-Of-Day clock), \code{memaddr} (unsigned int) rappresenta un
+indirizzo di memoria a 32 bit.
+
+\subsection{\code{pteEntry\_t} --- entry di Page Table}
+Rappresenta \emph{una} riga della page table usata dalla memoria virtuale
+(Fase 3): \code{pte\_entryHI} contiene VPN (Virtual Page Number) e ASID,
+\code{pte\_entryLO} contiene PFN (Physical Frame Number) più i bit di
+controllo (\code{V} = valida, \code{D} = dirty/scrivibile). Non è usata dalla
+Fase 1, ma è dichiarata qui perché fa parte del ``vocabolario'' di tipi di
+tutto il progetto.
+
+\subsection{\code{context\_t} --- contesto per il pass-up}
+Tripletta \emph{(stack pointer, status, program counter)} che descrive
+\emph{dove} il Nucleus deve saltare quando passa un'eccezione a un livello
+superiore (Support Level). Viene caricata dall'istruzione \code{LDCXT} in
+\code{passUpOrDie} (Fase 2).
+
+\subsection{\code{support\_t} --- la ``Support Structure''}
+È la struttura che collega Nucleus e Support Level (dettagliata in Fase 3):
+contiene l'ASID del processo, due slot di stato salvato
+(\code{sup\_exceptState[2]}, uno per i page fault e uno per le altre
+eccezioni), due context di ripartenza (\code{sup\_exceptContext[2]}), la
+Page Table privata del processo utente (32 entry) e due stack dedicati agli
+handler (\code{sup\_stackTLB}, \code{sup\_stackGen}, 500 word ciascuno). Ogni
+\code{pcb\_t} ha un puntatore opzionale a una \code{support\_t}
+(\code{p\_supportStruct}): se è \code{NULL} il processo è un processo
+``puro kernel'' (Fase 2), altrimenti è una U-proc (Fase 3).
+
+\subsection{\code{swap\_t} --- descrittore di frame nello Swap Pool}
+Usato solo in Fase 3: per ogni frame fisico dello Swap Pool ricorda quale
+ASID e quale pagina logica vi risiedono, e un puntatore alla PTE
+corrispondente (per poterla invalidare rapidamente in caso di sfratto).
+
+\subsection{\code{pcb\_t} --- il Process Control Block}
+\label{sub:pcb-t-fase1}
+Il cuore della Fase 1. Campo per campo:
+
+\begin{center}
+\begin{tabular}{@{}lp{10.3cm}@{}}
+\toprule
+\textbf{Campo} & \textbf{Significato} \\
+\midrule
+\code{p\_list} & nodo di lista usato per inserire il PCB in \emph{una} coda alla
+  volta: la free list dei PCB liberi, la ready queue, oppure la coda dei
+  processi bloccati su un semaforo (\code{s\_procq} in \code{semd\_t}). Un
+  PCB non può stare in due di queste code contemporaneamente, quindi
+  riutilizzare lo stesso campo per tutte e tre è sicuro e risparmia memoria. \\
+\code{p\_parent} & puntatore al PCB del processo padre (\code{NULL} per il
+  processo radice). \\
+\code{p\_child} & testa della lista dei figli di \emph{questo} processo. \\
+\code{p\_sib} & nodo con cui questo PCB si aggancia alla lista \code{p\_child}
+  del proprio padre (lista dei ``fratelli''). \\
+\code{p\_s} & \code{state\_t}: l'intero stato del processore (registri,
+  PC, status, ecc.) salvato/ripristinato a ogni context switch. \\
+\code{p\_time} & tempo di CPU accumulato dal processo (usato dalla syscall
+  \code{GETTIME}). \\
+\code{p\_semAdd} & puntatore intero: se non \code{NULL}, indirizzo del
+  semaforo su cui il processo è bloccato (altrimenti il processo è pronto o
+  in esecuzione). \\
+\code{p\_supportStruct} & puntatore alla \code{support\_t} del processo, o
+  \code{NULL} se non ne ha una. \\
+\code{p\_prio} & priorità (\code{PROCESS\_PRIO\_LOW}=0 o
+  \code{PROCESS\_PRIO\_HIGH}=1) usata dallo scheduler. \\
+\code{p\_pid} & identificatore del processo, assegnato in ordine crescente
+  da \code{allocPcb}. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Da notare}: \code{p\_list} è usato per \emph{tre} scopi diversi in
+tempi diversi (free list / ready queue / coda semaforo) ma mai
+simultaneamente: è un classico esempio di riuso di un campo di collegamento
+generico offerto dalla libreria di liste intrusive.
+
+\subsection{\code{semd\_t} --- descrittore di semaforo attivo}
+\begin{itemize}
+\item \code{s\_key}: puntatore che identifica \emph{univocamente} il
+  semaforo (in pratica l'indirizzo della variabile intera che rappresenta il
+  semaforo, es. un elemento dell'array \code{devSems}).
+\item \code{s\_procq}: testa della coda dei PCB bloccati su questo semaforo
+  (i nodi agganciati sono i campi \code{p\_list} dei PCB).
+\item \code{s\_link}: nodo con cui il descrittore si aggancia alla ASL
+  (\code{semd\_h}) oppure alla free list dei descrittori
+  (\code{semdFree\_h}).
+\end{itemize}
+
+% ============================================================
+\section{Tipi forniti dalla SDK \texorpdfstring{$\mu$}{u}RISCV (\code{uriscv/types.h})}
+% ============================================================
+
+\code{headers/types.h} inizia con \code{\#include <uriscv/types.h>}: un
+header di sistema (in \code{/usr/include/uriscv/}, \textbf{non} scritto dal
+progetto) che definisce i tipi legati direttamente all'hardware emulato.
+Questi tipi compaiono in \emph{ogni} listato dei tre documenti (\code{p\_s},
+\code{savedState}, \code{exState}\ldots) ma non sono mai dichiarati nei
+sorgenti del progetto: vale la pena vederli una volta per tutte qui, perché
+altrimenti campi come \code{->reg\_a0} o \code{->cause} restano ``magici''.
+
+\subsection{\code{state\_t} --- lo stato del processore}
+\begin{lstlisting}
+#define STATE_GPR_LEN 32
+
+typedef struct state {
+    unsigned int entry_hi;
+    unsigned int cause;
+    unsigned int status;
+    unsigned int pc_epc;
+    unsigned int mie;
+    unsigned int gpr[STATE_GPR_LEN];
+} state_t;
+
+/* alias per i 32 registri general-purpose (convenzione RISC-V) */
+#define reg_sp gpr[2]
+#define reg_a0 gpr[24]
+#define reg_a1 gpr[25]
+#define reg_a2 gpr[26]
+#define reg_a3 gpr[27]
+/* ... reg_ra, reg_gp, reg_t0..t6, reg_s0..s11, reg_a4..a7 ... */
+\end{lstlisting}
+\`E la struttura \textbf{più importante di tutto il progetto}: rappresenta
+l'intero stato del processore in un dato istante, ed è ciò che viene
+salvato/ripristinato a ogni context switch, eccezione o interrupt.
+\begin{itemize}
+\item \code{entry\_hi}: registro TLB con VPN (indirizzo virtuale) e ASID
+  --- rilevante nei page fault (Fase 3).
+\item \code{cause}: il registro che spiega \emph{perché} è avvenuta
+  l'eccezione (bit 31 = interrupt; altrimenti \code{ExcCode} nei bit
+  bassi). \`E il primo campo letto da \code{exceptionHandler}.
+\item \code{status}: i bit di modalità e abilitazione interrupt
+  (\code{MPP} = kernel/user mode, \code{MIE}/\code{MPIE} = interrupt
+  correnti/precedenti abilitati).
+\item \code{pc\_epc}: il program counter, cioè l'indirizzo dell'istruzione
+  a cui riprendere l'esecuzione.
+\item \code{mie}: maschera di quali sorgenti di interrupt sono abilitate.
+\item \code{gpr[32]}: i 32 registri general-purpose della RISC-V
+  (\code{x0}--\code{x31}). Il progetto non li indicizza mai numericamente,
+  ma tramite le macro \code{reg\_sp}, \code{reg\_a0}--\code{reg\_a3}
+  (usate per leggere il numero e gli argomenti di una \code{SYSCALL},
+  esattamente come \code{a0}--\code{a3} nella convenzione di chiamata
+  RISC-V), ecc.
+\end{itemize}
+Nel PCB, il campo \code{p\_s} (Sezione~\ref{sub:pcb-t-fase1}) è di tipo \code{state\_t}: è
+\emph{la} copia persistente dello stato di un processo mentre non sta
+girando. Quando un'eccezione avviene, il \textbf{firmware} (non il
+Nucleus) salva automaticamente lo stato corrente in un'area fissa di
+memoria (\code{BIOSDATAPAGE}, si veda il documento di Fase 2): è da lì che
+\code{exceptionHandler} legge \code{savedState}.
+
+\subsection{\code{passupvector\_t} --- il Pass Up Vector}
+\begin{lstlisting}
+typedef struct passupvector {
+    unsigned int tlb_refill_handler;
+    unsigned int tlb_refill_stackPtr;
+    unsigned int exception_handler;
+    unsigned int exception_stackPtr;
+} passupvector_t;
+\end{lstlisting}
+Quattro interi che il Nucleus scrive \textbf{una sola volta}, in
+\code{initial.c::main} (si veda il documento di Fase 2), a un indirizzo
+fisso (\code{PASSUPVECTOR}, \code{0x0FFFF900}) letto dal firmware: dicono
+all'hardware dove saltare (\code{\_handler}) e quale stack usare
+(\code{\_stackPtr}) rispettivamente per un evento di TLB-Refill e per
+qualunque altra eccezione. \`E il meccanismo con cui il Nucleus si
+``registra'' presso il firmware come gestore di tutte le eccezioni.
+
+\subsection{\code{dtpreg\_t} e \code{termreg\_t} --- registri dei device}
+\begin{lstlisting}
+/* Device "semplici": disk, flash, printer */
+typedef struct dtpreg {
+    unsigned int status;
+    unsigned int command;
+    unsigned int data0;
+    unsigned int data1;
+} dtpreg_t;
+
+/* Terminali: due sotto-canali indipendenti (ricezione e trasmissione) */
+typedef struct termreg {
+    unsigned int recv_status;
+    unsigned int recv_command;
+    unsigned int transm_status;
+    unsigned int transm_command;
+} termreg_t;
+\end{lstlisting}
+Due modi di interpretare il blocco di registri hardware di un device
+(l'indirizzo di partenza si calcola con la macro \code{DEV\_REG\_ADDR(line,
+dev)}, anch'essa fornita dalla SDK in \code{uriscv/arch.h}). I device
+``semplici'' (disk, flash, printer) hanno un'unica coppia
+status/comando (più due registri dati, \code{data0}/\code{data1}, usati
+per il DMA: si veda \code{flashOperation} in Fase 3, che scrive l'indirizzo
+del frame in \code{data0}). I terminali, avendo due canali fisicamente
+indipendenti, raddoppiano la coppia: \code{recv\_*} per la ricezione,
+\code{transm\_*} per la trasmissione --- esattamente la distinzione già
+introdotta a proposito di \code{TERM\_TX\_SEM}/\code{TERM\_RX\_SEM}
+(Fase 2) e usata da \code{writeTerminal}/\code{readTerminal} (Fase 3).
+Si noti che \code{interrupts.c} (Fase 2) non usa questi due \code{typedef}
+per nome, ma ottiene lo stesso effetto indicizzando manualmente un array
+di \code{unsigned int} agli stessi offset (si vedano le macro
+\code{DEV\_STATUS}/\code{DEV\_COMMAND}/\code{TERM\_RECV\_STATUS}\ldots nel
+documento di Fase 2): risultato identico, stile diverso.
+
+% ============================================================
+\section{\code{headers/listx.h} --- liste concatenate generiche}
+% ============================================================
+
+Questo file è un sottoinsieme (semplificato) delle liste doppiamente
+concatenate circolari del kernel Linux (\code{include/linux/list.h}). È la
+base tecnica su cui si costruiscono \emph{tutte} le code del progetto: ready
+queue, code dei semafori, lista dei figli, free list dei PCB e dei
+\code{semd\_t}.
+
+\subsection{L'idea: liste ``intrusive''}
+Invece di una lista generica che contiene puntatori a dati arbitrari
+(come una \code{List<T>} ad alto livello), qui la lista è \emph{intrusiva}:
+un campo \code{struct list\_head} viene inserito \emph{dentro} la struttura
+dati che si vuole collegare (es. \code{p\_list} dentro \code{pcb\_t}). La
+lista collega direttamente questi campi tra loro; per risalire alla struttura
+dati che li contiene si usa la macro \func{container\_of}.
+
+\begin{lstlisting}
+struct list_head {
+    struct list_head *next, *prev;
+};
+\end{lstlisting}
+Una lista è quindi semplicemente un nodo con due puntatori. Una lista
+\emph{vuota} è un nodo il cui \code{next} e \code{prev} puntano \emph{a se
+stesso}: questo è il trucco che elimina tutti i casi speciali.
+
+\subsection{\func{offsetof} e \func{container\_of}}
+\begin{lstlisting}
+#define offsetof(TYPE, MEMBER) ((size_tt)(&((TYPE *)0)->MEMBER))
+
+#define container_of(ptr, type, member)                                    \
+    ({                                                                     \
+        const typeof(((type *)0)->member) *__mptr = (ptr);                 \
+        (type *)((char *)__mptr - offsetof(type, member));                 \
+    })
+\end{lstlisting}
+\begin{itemize}
+\item \func{offsetof(TYPE, MEMBER)} calcola, senza mai istanziare
+  davvero una \code{TYPE}, la distanza in byte dall'inizio della struttura al
+  campo \code{MEMBER}: finge che una \code{TYPE} sia allocata all'indirizzo
+  \code{0} e legge l'indirizzo (che numericamente coincide con l'offset) del
+  campo richiesto.
+\item \func{container\_of(ptr, type, member)} fa l'operazione inversa
+  di ``prendere l'indirizzo di un campo e tornare al contenitore'': dato un
+  puntatore \code{ptr} a un campo \code{member} di tipo \code{type}, sottrae
+  l'offset del campo dall'indirizzo per ottenere il puntatore alla struttura
+  intera. È così che, ad esempio, da un \code{struct list\_head *} estratto
+  dalla ready queue si risale al \code{pcb\_t*} che lo contiene:
+  \code{container\_of(pos, pcb\_t, p\_list)}.
+\end{itemize}
+
+\subsection{Inizializzazione}
+\begin{lstlisting}
+#define LIST_HEAD_INIT(name) { &(name), &(name) }
+#define LIST_HEAD(name) struct list_head name = LIST_HEAD_INIT(name)
+
+static inline void INIT_LIST_HEAD(struct list_head *list) {
+    list->next = list;
+    list->prev = list;
+}
+\end{lstlisting}
+\code{LIST\_HEAD\_INIT}/\code{LIST\_HEAD} sono macro usate per dichiarare e
+inizializzare, in un colpo solo, una variabile lista vuota a livello
+statico. \func{INIT\_LIST\_HEAD} è la funzione (inline) equivalente da
+chiamare a runtime su una lista già dichiarata: imposta entrambi i puntatori
+sulla lista stessa, rendendola una lista vuota valida.
+
+\subsection{Inserimento}
+\begin{lstlisting}
+static inline void __list_add(struct list_head *new, struct list_head *prev, struct list_head *next) {
+    next->prev = new;
+    new->next  = next;
+    new->prev  = prev;
+    prev->next = new;
+}
+
+static inline void list_add(struct list_head *new, struct list_head *head) {
+    __list_add(new, head, head->next);
+}
+
+static inline void list_add_tail(struct list_head *new, struct list_head *head) {
+    __list_add(new, head->prev, head);
+}
+\end{lstlisting}
+\func{\_\_list\_add} è la primitiva di base: inserisce \code{new} \emph{tra}
+due nodi già collegati (\code{prev} e \code{next}), aggiornando i 4
+puntatori coinvolti. È $O(1)$ e funziona identicamente sia che la lista sia
+vuota, con un elemento o con molti.
+\begin{itemize}
+\item \func{list\_add(new, head)}: inserisce \code{new} \emph{subito dopo}
+  \code{head}, cioè in \textbf{testa} alla lista (\code{prev=head},
+  \code{next=head->next}).
+\item \func{list\_add\_tail(new, head)}: inserisce \code{new} \emph{subito
+  prima} di \code{head}, cioè in \textbf{coda} (\code{prev=head->prev},
+  \code{next=head}). È la funzione più usata nel progetto (free list, code
+  FIFO, inserimento dei figli).
+\end{itemize}
+
+\subsection{Rimozione}
+\begin{lstlisting}
+static inline void __list_del(struct list_head *prev, struct list_head *next) {
+    next->prev = prev;
+    prev->next = next;
+}
+
+static inline void list_del(struct list_head *entry) {
+    __list_del(entry->prev, entry->next);
+    entry->next = entry;
+    entry->prev = entry;
+}
+\end{lstlisting}
+\func{\_\_list\_del} ricollega direttamente \code{prev} e \code{next}
+``scavalcando'' il nodo che sta in mezzo. \func{list\_del(entry)} la usa per
+staccare \code{entry} dalla lista in cui si trova, e poi
+\textbf{reimposta \code{entry} come lista vuota} (punta a se stesso): questo
+evita puntatori pendenti (dangling) se qualcuno riusa quel nodo per
+errore prima di reinserirlo altrove.
+
+\subsection{Test e navigazione}
+\begin{lstlisting}
+static inline int list_is_last(const struct list_head *list, const struct list_head *head) {
+    return list->next == head;
+}
+
+static inline int list_empty(const struct list_head *head) {
+    return head->next == head;
+}
+
+static inline struct list_head *list_next(const struct list_head *current) {
+    if (list_empty(current)) return NULL;
+    else return current->next;
+}
+
+static inline struct list_head *list_prev(const struct list_head *current) {
+    if (list_empty(current)) return NULL;
+    else return current->prev;
+}
+\end{lstlisting}
+\func{list\_empty} sfrutta esattamente l'invariante di inizializzazione: una
+lista vuota ha \code{head->next == head}. \func{list\_is\_last} controlla se
+\code{list} è l'ultimo nodo prima della sentinella \code{head}.
+\func{list\_next}/\func{list\_prev} sono getter di comodo (usati poco nel
+progetto, che preferisce le macro di iterazione sottostanti).
+
+\subsection{Macro di iterazione}
+\begin{lstlisting}
+#define list_for_each(pos, head) \
+    for (pos = (head)->next; pos != (head); pos = pos->next)
+
+#define list_for_each_prev(pos, head) \
+    for (pos = (head)->prev; pos != (head); pos = pos->prev)
+
+#define list_for_each_entry(pos, head, member)                              \
+    for (pos = container_of((head)->next, typeof(*pos), member);            \
+         &pos->member != (head);                                            \
+         pos = container_of(pos->member.next, typeof(*pos), member))
+
+#define list_for_each_entry_reverse(pos, head, member)                      \
+    for (pos = container_of((head)->prev, typeof(*pos), member);            \
+         &pos->member != (head);                                            \
+         pos = container_of(pos->member.prev, typeof(*pos), member))
+\end{lstlisting}
+\begin{itemize}
+\item \func{list\_for\_each(pos, head)}: itera sui \emph{nodi
+  list\_head} grezzi, partendo dal primo elemento reale
+  (\code{head->next}) e fermandosi quando si torna alla sentinella. Usata
+  in \code{asl.c} e \code{pcb.c} quando serve confrontare \code{pos} con
+  l'indirizzo di un campo specifico (es. \code{outProcQ}, \code{outBlocked}).
+\item \func{list\_for\_each\_entry(pos, head, member)}: variante di
+  comodo che restituisce direttamente il puntatore alla \emph{struttura
+  contenitore} (tramite \code{container\_of} a ogni iterazione), evitando di
+  dover fare la conversione manualmente nel corpo del ciclo. È quella usata
+  in \code{asl.c} per scorrere \code{semd\_h} (\code{semd\_t *s}).
+\item Le due varianti \code{\_reverse} percorrono la lista all'indietro
+  partendo da \code{head->prev}; non sono usate nel codice del progetto ma
+  sono disponibili nella libreria.
+\end{itemize}
+
+% ============================================================
+\section{\code{phase1/pcb.c} --- Process Control Block}
+% ============================================================
+
+\subsection{Il file header \code{phase1/headers/pcb.h}}
+\begin{lstlisting}
+// SPDX-FileCopyrightText: 2022 Luca Bassi, Gaia Clerici, Mirco Dondi, Fabio Gaiba
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#ifndef PCB_H_INCLUDED
+#define PCB_H_INCLUDED
+
+#include "../../headers/listx.h"
+#include "../../headers/types.h"
+
+void initPcbs();
+void freePcb(pcb_t* p);
+pcb_t* allocPcb();
+
+void mkEmptyProcQ(struct list_head* head);
+int emptyProcQ(struct list_head* head);
+void insertProcQ(struct list_head* head, pcb_t* p);
+pcb_t* headProcQ(struct list_head* head);
+pcb_t* removeProcQ(struct list_head* head);
+pcb_t* outProcQ(struct list_head* head, pcb_t* p);
+
+int emptyChild(pcb_t* p);
+void insertChild(pcb_t* prnt, pcb_t* p);
+pcb_t* removeChild(pcb_t* p);
+pcb_t* outChild(pcb_t* p);
+
+#endif
+\end{lstlisting}
+\code{pcb.h} è l'\textbf{interfaccia pubblica} del modulo: dichiara i
+prototipi delle 13 funzioni analizzate più sotto (nel file originale ogni
+prototipo è preceduto da un commento su una riga che ne riassume lo scopo
+--- lo stesso testo usato come base per le spiegazioni di questa sezione),
+include \code{listx.h} (per \code{struct list\_head}) e \code{types.h}
+(per \code{pcb\_t}), e non definisce \emph{nulla}: nessuna variabile,
+nessun corpo di funzione. \`E questa separazione header/implementazione
+che permette a \code{phase2} e \code{phase3} di usare i PCB
+(\code{\#include "../phase1/headers/pcb.h"}) senza conoscere né poter
+accedere a \code{pcbFree\_h}, \code{pcbFree\_table} o \code{next\_pid}
+(dichiarati \code{static} in \code{pcb.c}, quindi invisibili fuori da quel
+file): l'unico modo per manipolare i PCB dall'esterno è tramite queste 13
+funzioni.
+
+\`E interessante notare che la testata \textbf{SPDX} attribuisce questo
+file (e il gemello \code{asl.h}) a un altro gruppo di autori (2022): è
+l'\textbf{interfaccia data dal corso} (il ``contratto'' che l'implementazione
+deve rispettare, ereditato da un precedente progetto PandOS didattico
+open-source), mentre \code{pcb.c} e \code{asl.c} --- le implementazioni
+vere e proprie analizzate in questo documento --- sono il lavoro originale
+di questo team. Distinguere le due cose è utile se l'esaminatore chiede
+``questo file l'avete scritto voi?''.
+
+\subsection{Variabili statiche del modulo}
+\begin{lstlisting}
+static struct list_head pcbFree_h;
+static pcb_t pcbFree_table[MAXPROC];
+static int next_pid = 1;
+\end{lstlisting}
+\begin{itemize}
+\item \code{pcbFree\_table[MAXPROC]}: l'unico array di PCB dell'intero
+  sistema (20 elementi, \code{MAXPROC=20} in \code{const.h}). \emph{Ogni}
+  processo che esisterà mai durante l'esecuzione userà uno di questi 20
+  slot: non c'è altro modo per ottenere un PCB.
+\item \code{pcbFree\_h}: testa della free list che collega, tramite il
+  campo \code{p\_list}, tutti gli slot di \code{pcbFree\_table} attualmente
+  \emph{non} in uso.
+\item \code{next\_pid}: contatore globale monotono crescente, usato per
+  assegnare un PID univoco a ogni PCB allocato. Parte da 1 (0 è riservato
+  per rappresentare ``nessun PID''/errore in alcune chiamate, es.
+  \code{GETPROCESSID}). \textbf{Nota:} i PID non vengono mai riusati anche se
+  un processo termina, quindi crescono indefinitamente entro i limiti di un
+  \code{int} --- comportamento accettabile perché il numero di processi
+  creabili in una sessione è comunque limitato dalla dimensione della RAM
+  simulata e dalla durata delle demo.
+\end{itemize}
+
+\subsection{\func{initPcbs} --- inizializzazione}
+\begin{lstlisting}
+void initPcbs() {
+    int i;
+    INIT_LIST_HEAD(&pcbFree_h);
+
+    for (i = 0; i < MAXPROC; i++) {
+        INIT_LIST_HEAD(&pcbFree_table[i].p_list);
+        pcbFree_table[i].p_pid = 0;
+        list_add_tail(&pcbFree_table[i].p_list, &pcbFree_h);
+    }
+}
+\end{lstlisting}
+Chiamata \emph{una sola volta} all'avvio del sistema (da \code{initial.c}).
+Inizializza la sentinella \code{pcbFree\_h} come lista vuota, poi per
+ciascuno dei 20 slot dell'array statico: inizializza il proprio
+\code{p\_list} come nodo isolato e lo accoda (\code{list\_add\_tail}) alla
+free list. Al termine, \code{pcbFree\_h} contiene tutti e 20 gli slot, nello
+stesso ordine dell'array. Costo: $O(\text{MAXPROC})$, eseguito una volta
+sola al boot.
+
+\subsection{\func{allocPcb} --- allocazione}
+\begin{lstlisting}
+pcb_t* allocPcb() {
+    if (list_empty(&pcbFree_h)) return NULL;
+
+    struct list_head *pos = pcbFree_h.next;
+    list_del(pos);
+
+    pcb_t *new_pcb = container_of(pos, pcb_t, p_list);
+    new_pcb->p_pid = next_pid++;
+    INIT_LIST_HEAD(&new_pcb->p_list);
+    INIT_LIST_HEAD(&new_pcb->p_child);
+    INIT_LIST_HEAD(&new_pcb->p_sib);
+    new_pcb->p_parent        = NULL;
+    new_pcb->p_semAdd        = NULL;
+    new_pcb->p_supportStruct = NULL;
+    new_pcb->p_time          = 0;
+    new_pcb->p_prio          = 0;
+
+    return new_pcb;
+}
+\end{lstlisting}
+Se la free list è vuota (tutti i 20 PCB sono in uso: limite massimo di
+processi concorrenti raggiunto), ritorna \code{NULL} --- il chiamante (in
+Fase 2, la syscall \code{CREATEPROCESS}) deve gestire questo fallimento
+restituendo un errore al processo padre, \emph{senza mai} bloccarsi o andare
+in crash. Altrimenti:
+\begin{enumerate}
+\item preleva il \emph{primo} nodo della free list (\code{pcbFree\_h.next})
+  e lo stacca con \code{list\_del};
+\item risale al \code{pcb\_t} contenitore con \code{container\_of};
+\item gli assegna un nuovo PID univoco (\code{next\_pid++}, post-incremento:
+  usa il valore corrente e \emph{poi} incrementa);
+\item reinizializza da zero \emph{tutti} i campi rilevanti: le tre liste
+  intrusive (\code{p\_list}, \code{p\_child}, \code{p\_sib}) come liste
+  vuote, e azzera puntatore al padre, puntatore al semaforo, puntatore alla
+  support struct, tempo CPU e priorità.
+\end{enumerate}
+Questo azzeramento sistematico è cruciale: un PCB può essere stato usato in
+precedenza da un altro processo (poi terminato e liberato), quindi
+conterrebbe ``spazzatura'' residua se non venisse ripulito esplicitamente ---
+non essendoci \code{malloc}, non c'è nemmeno uno zeroing implicito come con
+\code{calloc}.
+
+\subsection{\func{freePcb} --- deallocazione}
+\begin{lstlisting}
+void freePcb(pcb_t* p) {
+    if (p != NULL) list_add_tail(&p->p_list, &pcbFree_h);
+}
+\end{lstlisting}
+Semplicemente riaggancia \code{p} in coda alla free list tramite il suo
+campo \code{p\_list} (che a questo punto deve essere già stato staccato da
+qualunque altra coda in cui si trovasse --- responsabilità del chiamante,
+tipicamente \code{terminateProcess} in Fase 2). $O(1)$.
+
+\subsection{Gestione delle code di processi (ready queue e code semaforo)}
+\label{sub:code-processi-fase1}
+\begin{lstlisting}
+void mkEmptyProcQ(struct list_head* head) {
+    INIT_LIST_HEAD(head);
+}
+
+int emptyProcQ(struct list_head* head) {
+    return list_empty(head);
+}
+
+void insertProcQ(struct list_head* head, pcb_t* p) {
+    struct list_head *pos;
+    pcb_t *iter;
+    list_for_each(pos, head) {
+        iter = container_of(pos, pcb_t, p_list);
+        if (p->p_prio > iter->p_prio) {
+            __list_add(&p->p_list, pos->prev, pos);
+            return;
+        }
+    }
+    list_add_tail(&p->p_list, head);
+}
+
+pcb_t* headProcQ(struct list_head* head) {
+    if (list_empty(head)) return NULL;
+    return container_of(head->next, pcb_t, p_list);
+}
+
+pcb_t* removeProcQ(struct list_head* head) {
+    if (list_empty(head)) return NULL;
+    struct list_head *first = head->next;
+    list_del(first);
+    INIT_LIST_HEAD(first);
+    return container_of(first, pcb_t, p_list);
+}
+
+pcb_t* outProcQ(struct list_head* head, pcb_t* p) {
+    struct list_head *pos;
+    pcb_t *iter;
+    list_for_each(pos, head) {
+        iter = container_of(pos, pcb_t, p_list);
+        if (iter == p) {
+            list_del(pos);
+            return p;
+        }
+    }
+    return NULL;
+}
+\end{lstlisting}
+
+\begin{itemize}
+\item \func{mkEmptyProcQ(head)}: banale wrapper su \code{INIT\_LIST\_HEAD};
+  crea/azzera una coda di processi vuota. Usata da \code{initial.c} per la
+  \code{readyQueue} globale.
+\item \func{emptyProcQ(head)}: wrapper su \code{list\_empty}.
+\item \func{insertProcQ(head, p)}: \textbf{questa è l'unica funzione della
+  Fase 1 che introduce una politica di ordinamento}. Scorre la coda dal
+  primo elemento e, appena trova un elemento \code{iter} con priorità
+  \emph{strettamente minore} di \code{p}, inserisce \code{p} \emph{prima} di
+  \code{iter} (con l'inserimento a basso livello \code{\_\_list\_add}, per
+  poterlo fare in mezzo alla lista). Se non trova nessun elemento con
+  priorità minore (cioè tutti hanno priorità $\ge$ quella di \code{p}, oppure
+  la coda è vuota), lo accoda in fondo con \code{list\_add\_tail}.
+  Risultato: la coda resta sempre ordinata per priorità
+  \emph{decrescente} in testa, e a parità di priorità l'ordine di
+  inserimento è preservato (FIFO) --- è esattamente ciò che serve per
+  realizzare un \textbf{round-robin con priorità} nello scheduler di Fase 2:
+  basta sempre estrarre la testa.
+\item \func{headProcQ(head)}: restituisce (senza rimuoverlo) il PCB in
+  testa, cioè il primo container\_of di \code{head->next}; \code{NULL} se
+  la coda è vuota. Usata dallo scheduler per ispezionare il prossimo
+  candidato senza consumarlo (es. nella gestione dello YIELD).
+\item \func{removeProcQ(head)}: rimuove e restituisce la testa. Stacca il
+  primo nodo (\code{list\_del}), lo reinizializza come lista a sé
+  (\code{INIT\_LIST\_HEAD}, per igiene, così il PCB rimosso non conserva
+  puntatori pendenti alla vecchia coda) e ne risale al \code{pcb\_t}.
+  Questa è la funzione che lo scheduler chiama per estrarre il
+  \emph{prossimo processo da eseguire}.
+\item \func{outProcQ(head, p)}: rimozione \emph{mirata} di un PCB
+  specifico da una coda arbitraria (non necessariamente in testa). Scorre
+  linearmente la coda con \code{list\_for\_each} finché non trova il nodo il
+  cui contenitore è \code{p}, poi lo stacca con \code{list\_del} e lo
+  ritorna; se \code{p} non è nella coda, ritorna \code{NULL}. È $O(n)$ nel
+  caso peggiore (a differenza delle altre operazioni, tutte $O(1)$): serve
+  ad esempio quando un processo viene terminato mentre è ancora nella ready
+  queue (in Fase 2, \code{terminateProcess} chiama sempre
+  \code{outProcQ(\&readyQueue, p)} per sicurezza, anche se \code{p} potrebbe
+  non essere in quella coda in quel momento --- la funzione in tal caso
+  semplicemente non trova nulla e ritorna \code{NULL} senza effetti).
+\end{itemize}
+
+\subsection{Gestione dell'albero dei processi}
+\begin{lstlisting}
+int emptyChild(pcb_t* p) {
+    return list_empty(&p->p_child);
+}
+
+void insertChild(pcb_t *prnt, pcb_t *p) {
+    p->p_parent = prnt;
+    list_add_tail(&p->p_sib, &prnt->p_child);
+}
+
+pcb_t* removeChild(pcb_t* p) {
+    if (!p || list_empty(&p->p_child)) return NULL;
+    struct list_head *first = p->p_child.next;
+    pcb_t *child = container_of(first, pcb_t, p_sib);
+    list_del(&child->p_sib);
+    INIT_LIST_HEAD(&child->p_sib);
+    child->p_parent = NULL;
+    return child;
+}
+
+pcb_t* outChild(pcb_t* p) {
+    if (!p || !p->p_parent) return NULL;
+    list_del(&p->p_sib);
+    INIT_LIST_HEAD(&p->p_sib);
+    p->p_parent = NULL;
+    return p;
+}
+\end{lstlisting}
+
+La rappresentazione dell'albero dei processi è ``a puntatore al padre + lista
+dei figli'', il classico schema \emph{first-child, next-sibling} adattato
+alle liste intrusive:
+\begin{itemize}
+\item ogni PCB ha un \emph{unico} puntatore \code{p\_parent} al padre;
+\item ogni PCB ha una \emph{lista} \code{p\_child}, che è la testa della
+  lista dei propri figli;
+\item ogni PCB si aggancia alla lista \code{p\_child} del padre tramite il
+  proprio campo \code{p\_sib} (\emph{sibling}, fratello).
+\end{itemize}
+
+\begin{itemize}
+\item \func{emptyChild(p)}: vero se \code{p} non ha figli.
+\item \func{insertChild(prnt, p)}: rende \code{p} figlio di \code{prnt}:
+  imposta \code{p->p\_parent = prnt} e accoda \code{p->p\_sib} in fondo a
+  \code{prnt->p\_child}. Chiamata dalla syscall \code{CREATEPROCESS} appena
+  dopo aver allocato il nuovo PCB.
+\item \func{removeChild(p)}: rimuove e ritorna il \emph{primo} figlio di
+  \code{p} (quello inserito per primo, in testa alla lista), staccandolo
+  (\code{list\_del(\&child->p\_sib)}) e azzerandone il puntatore al padre.
+  Se \code{p} non ha figli ritorna \code{NULL}. È usata da
+  \code{terminateProcess} (Fase 2) in un ciclo
+  \code{while ((child = removeChild(p)) != NULL) terminateProcess(child);}
+  per terminare \emph{ricorsivamente e distruttivamente} tutto un
+  sotto-albero: a ogni iterazione stacca un figlio (quindi la lista si
+  accorcia) e lo termina ricorsivamente, il che a sua volta staccherà e
+  terminerà i suoi discendenti, finché l'albero sotto \code{p} non è vuoto.
+\item \func{outChild(p)}: operazione \emph{duale} di \code{removeChild}:
+  data direttamente la vittima \code{p} (non il padre), la stacca dalla
+  lista dei figli del \emph{proprio} padre e azzera \code{p\_parent}. Se
+  \code{p} non ha un padre (\code{p\_parent == NULL}, es. è il processo
+  radice, oppure è già stato staccato) ritorna \code{NULL} senza fare nulla.
+  È usata in \code{terminateProcess} \emph{dopo} aver già staccato tutti i
+  figli di \code{p} da \code{p} stesso, per staccare \code{p} dal proprio
+  padre: se non lo si facesse, un processo che termina se stesso (o che
+  viene terminato mentre non è più figlio ``attivo'') resterebbe agganciato
+  come figlio ``fantasma'' nella lista del padre, e una successiva
+  terminazione del padre lo ritroverebbe (già liberato!) tramite
+  \code{removeChild}, causando un uso di memoria invalida.
+\end{itemize}
+
+% ============================================================
+\section{\code{phase1/asl.c} --- Active Semaphore List}
+% ============================================================
+
+\subsection{Il file header \code{phase1/headers/asl.h}}
+\begin{lstlisting}
+// SPDX-FileCopyrightText: 2022 Luca Bassi, Gaia Clerici, Mirco Dondi, Fabio Gaiba
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#ifndef ASL_H_INCLUDED
+#define ASL_H_INCLUDED
+
+#include "../../headers/listx.h"
+#include "../../headers/types.h"
+
+extern semd_t semd_table[MAXPROC];
+extern struct list_head semdFree_h;
+extern struct list_head semd_h;
+
+void initASL();
+int insertBlocked(int* semAdd, pcb_t* p);
+pcb_t* removeBlocked(int* semAdd);
+pcb_t* outBlocked(pcb_t* p);
+pcb_t* headBlocked(int* semAdd);
+
+#endif
+\end{lstlisting}
+Stessa struttura di \code{pcb.h}, con una differenza degna di nota: qui
+\code{semd\_table}, \code{semdFree\_h} e \code{semd\_h} sono dichiarate
+\code{extern} (non \code{static} come i loro analoghi in \code{pcb.c}):
+sono quindi \emph{tecnicamente} accessibili anche da fuori
+\code{asl.c}, a differenza dei PCB. Nella pratica nessun altro modulo del
+progetto le usa direttamente (Fase 2 e Fase 3 passano sempre attraverso le
+5 funzioni pubbliche), ma la loro visibilità \code{extern} lascia aperta
+la possibilità --- prevista dalla specifica originale di Pandos, da cui
+questa interfaccia deriva --- di ispezionarle a fini di debug avanzato.
+Anche questo header porta la stessa attribuzione SPDX del 2022 discussa
+per \code{pcb.h}: fa parte della stessa interfaccia ``data'', che
+\code{asl.c} implementa.
+
+\subsection{Cos'è la ASL e perché serve}
+Un semaforo, in questo progetto, è semplicemente un \code{int} (es. una cella
+dell'array \code{devSems} in Fase 2, oppure una variabile globale come
+\code{swapPoolSem} in Fase 3): non esiste una struttura dati ``semaforo''
+associata a ciascuna variabile intera. Quando però un processo si blocca
+\emph{su} un semaforo, serve un posto dove tenere la coda dei processi in
+attesa \emph{per quel preciso indirizzo}. La \textbf{Active Semaphore List}
+(ASL) è esattamente questo: una lista di descrittori \code{semd\_t}, uno per
+ogni semaforo che ha \emph{almeno un} processo bloccato in questo momento
+(da cui ``active''). Un semaforo che nessuno sta aspettando non ha nessun
+descrittore nella ASL: se il suo valore diventa negativo per la prima volta,
+un descrittore viene allocato al volo dalla free list; quando l'ultimo
+processo in attesa su di esso viene rimosso, il descrittore torna nella free
+list.
+
+\subsection{Variabili globali del modulo}
+\begin{lstlisting}
+semd_t semd_table[MAXPROC];
+struct list_head semdFree_h;
+struct list_head semd_h;
+\end{lstlisting}
+\begin{itemize}
+\item \code{semd\_table[MAXPROC]}: array statico di descrittori di
+  semaforo. La dimensione è \code{MAXPROC} (20) e non un valore dedicato ai
+  semafori perché, nella teoria classica di Pandos, nel caso peggiore
+  \emph{ogni} processo può essere bloccato su un semaforo \emph{diverso}: non
+  serve più di \code{MAXPROC} descrittori contemporaneamente attivi.
+\item \code{semdFree\_h}: free list dei descrittori non in uso.
+\item \code{semd\_h}: la ASL vera e propria, cioè la lista dei descrittori
+  \emph{attualmente attivi} (con almeno un processo in coda).
+\end{itemize}
+A differenza di \code{pcb.c}, qui non c'è dichiarazione \code{static}: sono
+dichiarate anche in \code{asl.h} con \code{extern}, quindi visibili da fuori
+il modulo (anche se in pratica solo \code{asl.c} le manipola).
+
+\subsection{\func{initASL}}
+\begin{lstlisting}
+void initASL() {
+    INIT_LIST_HEAD(&semdFree_h);
+    INIT_LIST_HEAD(&semd_h);
+    for (int i = 0; i < MAXPROC; i++) {
+        semd_table[i].s_key = NULL;
+        INIT_LIST_HEAD(&semd_table[i].s_procq);
+        list_add_tail(&semd_table[i].s_link, &semdFree_h);
+    }
+}
+\end{lstlisting}
+Analoga a \code{initPcbs}: inizializza le due liste sentinella come vuote,
+poi per ciascuno dei 20 descrittori azzera la chiave, inizializza la coda dei
+processi bloccati come vuota, e lo accoda alla free list tramite
+\code{s\_link}. Chiamata una sola volta al boot, subito dopo
+\code{initPcbs()}.
+
+\subsection{\func{insertBlocked} --- blocco di un processo su un semaforo}
+\begin{lstlisting}
+int insertBlocked(int* semAdd, pcb_t* p) {
+    if (!semAdd || !p) return 1; // errore
+    semd_t* s;
+    list_for_each_entry(s, &semd_h, s_link) {
+        if (s->s_key == semAdd) {
+            list_add_tail(&p->p_list, &s->s_procq);
+            p->p_semAdd = semAdd;
+            return 0;
+        }
+    }
+    // semd non trovato, usa uno dalla free list
+    if (list_empty(&semdFree_h)) return 1; // nessun semd disponibile
+    s = container_of(semdFree_h.next, semd_t, s_link);
+    list_del(&s->s_link);
+    s->s_key = semAdd;
+    INIT_LIST_HEAD(&s->s_procq);
+    list_add_tail(&p->p_list, &s->s_procq);
+    p->p_semAdd = semAdd;
+    list_add_tail(&s->s_link, &semd_h);
+    return 0;
+}
+\end{lstlisting}
+Logica in due fasi:
+\begin{enumerate}
+\item \textbf{Ricerca}: scorre \code{semd\_h} con
+  \code{list\_for\_each\_entry} confrontando \code{s->s\_key} con
+  \code{semAdd}. Se trova un descrittore \emph{già attivo} per quel
+  semaforo, ci accoda semplicemente \code{p} (tramite \code{p->p\_list}),
+  imposta \code{p->p\_semAdd = semAdd} e ritorna \code{0} (successo).
+\item \textbf{Allocazione}: se nessun descrittore esiste ancora per quel
+  semaforo (è la \emph{prima} volta che qualcuno si blocca su di esso), ne
+  preleva uno dalla free list (se disponibile, altrimenti errore \code{1}:
+  situazione limite che segnalerebbe un bug, dato che \code{MAXPROC}
+  descrittori bastano sempre a coprire \code{MAXPROC} processi), lo
+  configura con la chiave giusta e una coda vuota, ci accoda \code{p}, e lo
+  sposta dalla free list alla ASL attiva (\code{list\_add\_tail(\&s->s\_link,
+  \&semd\_h)}).
+\end{enumerate}
+Nota: la ricerca è \emph{lineare}, $O(|\text{semd\_h}|)$: nel caso peggiore
+$O(\text{MAXPROC})$. È accettabile perché il numero di semafori
+\emph{attivi} contemporaneamente è comunque limitato dal numero di processi
+vivi, e la specifica del progetto non richiede una struttura ordinata più
+sofisticata (a differenza di alcune varianti storiche di Pandos che tengono
+la ASL ordinata per indirizzo per poter interrompere la ricerca in anticipo).
+
+\subsection{\func{removeBlocked} --- sblocco del primo processo in coda}
+\begin{lstlisting}
+pcb_t* removeBlocked(int* semAdd) {
+    if (!semAdd) return NULL;
+    semd_t* s;
+    list_for_each_entry(s, &semd_h, s_link) {
+        if (s->s_key == semAdd) {
+            if (list_empty(&s->s_procq)) return NULL;
+            pcb_t* p = container_of(s->s_procq.next, pcb_t, p_list);
+            list_del(&p->p_list);
+            p->p_semAdd = NULL;
+            if (list_empty(&s->s_procq)) {
+                list_del(&s->s_link);
+                s->s_key = NULL;
+                list_add_tail(&s->s_link, &semdFree_h);
+            }
+            return p;
+        }
+    }
+    return NULL;
+}
+\end{lstlisting}
+Trova il descrittore del semaforo \code{semAdd} (stessa ricerca lineare di
+sopra). Se la sua coda è vuota (situazione anomala: un descrittore attivo
+dovrebbe sempre avere almeno un processo, altrimenti sarebbe già tornato alla
+free list) ritorna \code{NULL}. Altrimenti:
+\begin{enumerate}
+\item preleva il \emph{primo} PCB della coda (FIFO: chi si è bloccato per
+  primo viene sbloccato per primo), lo stacca e azzera il suo
+  \code{p\_semAdd} (segnalando che ora non è più bloccato su nulla);
+\item \textbf{se dopo la rimozione la coda del semaforo è diventata vuota},
+  il descrittore non serve più: viene staccato dalla ASL e restituito alla
+  free list. Questo è il meccanismo che mantiene la ASL ``pulita'',
+  contenente solo descrittori realmente attivi.
+\end{enumerate}
+Chiamata dalla syscall \code{VERHOGEN} (V) in Fase 2, quando il valore del
+semaforo, dopo l'incremento, resta $\le 0$ (cioè c'era almeno un
+processo in attesa).
+
+\subsection{\func{outBlocked} --- rimozione mirata (non necessariamente in testa)}
+\begin{lstlisting}
+pcb_t* outBlocked(pcb_t* p) {
+    if (!p || !p->p_semAdd) return NULL;
+    semd_t* s;
+    list_for_each_entry(s, &semd_h, s_link) {
+        if (s->s_key == p->p_semAdd) {
+            struct list_head* pos;
+            list_for_each(pos, &s->s_procq) {
+                if (pos == &p->p_list) {
+                    list_del(&p->p_list);
+                    p->p_semAdd = NULL;
+                    if (list_empty(&s->s_procq)) {
+                        list_del(&s->s_link);
+                        s->s_key = NULL;
+                        list_add_tail(&s->s_link, &semdFree_h);
+                    }
+                    return p;
+                }
+            }
+            return NULL;
+        }
+    }
+    return NULL;
+}
+\end{lstlisting}
+Rimuove \code{p} dalla coda del semaforo su cui è bloccato (letto da
+\code{p->p\_semAdd}, non passato esplicitamente: è \code{p} stesso a
+``sapere'' su cosa è bloccato), \emph{indipendentemente dalla sua posizione}
+nella coda (non necessariamente il primo). Doppio ciclo annidato: prima trova
+il descrittore giusto (uguale a \code{insertBlocked}/\code{removeBlocked}),
+poi scorre la sua coda di processi confrontando i nodi \code{p\_list} finché
+non trova esattamente \code{\&p->p\_list}. Anche qui, se la coda si svuota
+dopo la rimozione, il descrittore torna alla free list.
+
+È l'unica delle tre operazioni di rimozione a costo $O(n \cdot m)$ nel caso
+peggiore (dove $n$ = semafori attivi, $m$ = lunghezza della coda), ma serve
+per un caso che le altre due non coprono: quando un processo bloccato
+\emph{da qualche parte} deve essere estratto senza sapere a priori la sua
+posizione. È usata in Fase 2 da \code{terminateProcess}: se il processo che
+si sta terminando risulta bloccato su un semaforo (\code{p->p\_semAdd !=
+NULL}), bisogna toglierlo dalla coda di quel semaforo prima di liberarne il
+PCB, altrimenti resterebbe un puntatore pendente nella ASL verso un PCB ormai
+restituito alla free list.
+
+\subsection{\func{headBlocked} --- ispezione senza rimozione}
+\begin{lstlisting}
+pcb_t* headBlocked(int* semAdd) {
+    if (!semAdd) return NULL;
+    semd_t* s;
+    list_for_each_entry(s, &semd_h, s_link) {
+        if (s->s_key == semAdd) {
+            if (list_empty(&s->s_procq)) return NULL;
+            return container_of(s->s_procq.next, pcb_t, p_list);
+        }
+    }
+    return NULL;
+}
+\end{lstlisting}
+Come \code{removeBlocked} ma \emph{senza} modificare nulla: trova il
+descrittore del semaforo e restituisce (senza toglierlo) il primo PCB della
+sua coda, oppure \code{NULL} se il semaforo non è attivo o la sua coda è
+vuota. Nel codice attuale del progetto non è invocata direttamente dai
+moduli di Fase 2/3 forniti (serve come primitiva di ispezione prevista dalla
+specifica standard di Pandos), ma fa parte dell'interfaccia pubblica di
+\code{asl.h} richiesta.
+
+% ============================================================
+\section{\code{klog.c} --- buffer di log circolare per il debug}
+% ============================================================
+
+\code{klog.c} è compilato in \textbf{tutti e tre} i target del progetto
+(\code{CMakeLists.txt}: compare come primo file sorgente di
+\code{MultiPandOS\_phase1}, \code{MultiPandOS\_phase2} e
+\code{MultiPandOS\_phase3}), quindi va conosciuto anche se non appartiene
+concettualmente a una fase specifica.
+
+\begin{lstlisting}
+#define KLOG_LINES     64
+#define KLOG_LINE_SIZE 42
+
+unsigned int klog_line_index = 0;
+unsigned int klog_char_index = 0;
+char         klog_buffer[KLOG_LINES][KLOG_LINE_SIZE] = {0};
+
+void klog_print(char *str) {
+    while (*str != '\0') {
+        if (*str == '\n') { next_line(); str++; }
+        else { klog_buffer[klog_line_index][klog_char_index] = *str++; next_char(); }
+    }
+}
+
+void klog_print_dec(unsigned int num) { /* stampa un numero decimale 0..99 */ }
+void klog_print_hex(unsigned int num) { /* stampa un numero in esadecimale */ }
+
+static void next_char(void) {
+    if (++klog_char_index >= KLOG_LINE_SIZE) { klog_char_index = 0; next_line(); }
+}
+static void next_line(void) {
+    klog_line_index = (klog_line_index + 1) % KLOG_LINES;
+    klog_char_index = 0;
+    for (unsigned int i = 0; i < KLOG_LINE_SIZE; i++)
+        klog_buffer[klog_line_index][i] = ' ';
+}
+\end{lstlisting}
+
+\`E una piccola libreria di logging \textbf{indipendente dal terminale
+virtuale}: invece di scrivere caratteri su un device (che richiede
+\code{DOIO}, quindi un Nucleus già funzionante e un processo che può
+bloccarsi), \code{klog\_print} scrive direttamente in un array globale
+circolare \code{klog\_buffer} (64 righe da 42 caratteri). Il buffer è
+pensato per essere \textbf{ispezionato dal debugger dell'emulatore}
+(tracciando l'indirizzo del simbolo \code{klog\_buffer} nella finestra di
+memoria di uMPS3/uRISCV): permette di lasciare ``tracce'' di cosa sta
+succedendo nel kernel anche in situazioni in cui il terminale non è ancora
+disponibile o si sospetta che il problema sia proprio nel sottosistema di
+I/O che si starebbe usando per stampare a video.
+\begin{itemize}
+\item \code{klog\_print(str)}: copia \code{str} carattere per carattere nella
+  riga corrente, andando a capo (\code{next\_line}) su ogni
+  \code{'\textbackslash n'} incontrato nella stringa sorgente.
+\item \code{klog\_print\_dec}/\code{klog\_print\_hex}: varianti per stampare
+  un numero, rispettivamente in decimale (limitato per costruzione
+  all'intervallo 0--99: il ramo \code{if(num >= 10)} gestisce due o più
+  cifre in un ciclo, il ramo \code{else} gestisce esplicitamente il caso a
+  una sola cifra) o in esadecimale (nessun limite, cifre \code{0-9A-F}).
+\item \code{next\_char}/\code{next\_line} (\code{static}, private del
+  modulo): gestiscono l'avanzamento circolare dentro la riga corrente e tra
+  le righe (\code{\% KLOG\_LINES}), ripulendo con spazi la riga nuova per
+  leggibilità quando si va a capo.
+\end{itemize}
+
+\paragraph{Attenzione: nel codice attuale non è mai invocato.} Una ricerca
+di \code{klog\_print} nell'intero albero dei sorgenti (\code{pcb.c},
+\code{asl.c}, \code{initial.c}, \code{scheduler.c}, \code{exceptions.c},
+\code{interrupts.c}, \code{initProc.c}, \code{vmSupport.c},
+\code{sysSupport.c}) non produce alcun risultato: è compilato e linkato in
+ogni build, ma \textbf{nessuna chiamata a queste funzioni è presente} nel
+resto del kernel fornito. Il debug ``a schermo'' effettivamente utilizzato
+nel progetto passa invece dalle macro condizionali di
+\code{phase2/debug.h} (si veda il documento di Fase 2, che scrivono davvero
+sul terminale via i registri hardware). \`E
+comunque utile sapere spiegare \emph{cosa fa e a cosa servirebbe}
+\code{klog.c} se l'esaminatore lo notasse tra i sorgenti compilati.
+
+% ============================================================
+\section{Relazioni tra le strutture: la ``mappa'' d'insieme}
+% ============================================================
+
+\`E utile fissare mentalmente come tutte queste liste si intreccino durante
+la vita di un processo:
+
+\begin{enumerate}
+\item Al boot, tutti i 20 PCB sono nella \textbf{free list} dei PCB
+  (\code{pcbFree\_h}) e tutti i 20 \code{semd\_t} sono nella \textbf{free
+  list} dei semafori (\code{semdFree\_h}).
+\item \code{allocPcb()} sposta un PCB dalla free list nel ``mondo'': da quel
+  momento il suo campo \code{p\_list} è libero per essere agganciato altrove
+  (Fase 2 lo inserisce subito nella ready queue).
+\item Mentre un processo è \textbf{pronto}, il suo \code{p\_list} è nella
+  \code{readyQueue} (ordinata per priorità da \code{insertProcQ}).
+\item Quando un processo esegue una \code{P} che lo blocca, \code{p\_list}
+  viene spostato (da \code{insertBlocked}) nella coda \code{s\_procq} del
+  descrittore \code{semd\_t} giusto, allocandolo dalla free list dei
+  semafori se necessario.
+\item Una \code{V} (\code{removeBlocked}) o una terminazione forzata
+  (\code{outBlocked}) rimuove il processo da quella coda e, se la coda
+  diventa vuota, il \code{semd\_t} torna alla free list dei semafori.
+\item Parallelamente, ogni processo (tranne il primo) è agganciato tramite
+  \code{p\_sib} alla lista \code{p\_child} del proprio padre: questo albero
+  \emph{coesiste} con le code sopra, è del tutto indipendente da esse (usa
+  campi diversi) e serve solo a sapere ``chi è figlio di chi'', per poter
+  terminare interi sotto-alberi.
+\item Alla terminazione, il PCB viene staccato da tutte le liste in cui si
+  trova (\code{outChild} dal padre, \code{outBlocked}/\code{outProcQ} dalla
+  coda in cui si trovava) e restituito, tramite \code{freePcb}, alla free
+  list dei PCB, pronto per essere riassegnato a un futuro processo.
+\end{enumerate}
+
+% ============================================================
+\section{Il test driver ufficiale: \code{phase1/p1test.c}}
+% ============================================================
+
+\code{p1test.c} \textbf{non è codice originale del progetto}: è il test
+driver standard fornito dal corso per verificare \code{pcb.c} e
+\code{asl.c} (compilato solo nel target \code{phase1} di
+\code{CMakeLists.txt}, insieme a \code{klog.c}, \code{pcb.c},
+\code{asl.c}). Vale comunque la pena sapere \emph{come è strutturato} e
+\emph{cosa dimostra}, perché è il modo in cui si osserva la Fase 1
+``funzionare'' a schermo (gira da sola, senza Nucleus: non ci sono
+eccezioni né scheduler, è pura esecuzione sequenziale in \code{main}).
+
+\subsection{Meccanismo di segnalazione}
+Due funzioni di supporto, \code{addokbuf}/\code{adderrbuf}, accumulano i
+messaggi di progresso (rispettivamente di errore) in due buffer statici
+(\code{okbuf}, \code{errbuf}) e li stampano anche a video sul terminale 0
+tramite \code{termprint} (una routine che scrive un carattere alla volta
+sul registro di comando del device, in polling attivo --- non usa
+\code{DOIO}, dato che il Nucleus non esiste ancora in questa fase).
+\code{adderrbuf} segnala l'errore e poi entra in un \textbf{loop infinito}
+(\code{while(1);}): non essendoci un vero kernel capace di gestire un
+\code{PANIC}, è il modo più semplice per ``fermare tutto'' non appena
+qualcosa non torna, così che l'errore resti visibile a video.
+
+\subsection{Cosa verifica, in ordine}
+\begin{enumerate}
+\item \textbf{\code{allocPcb}/\code{freePcb}}: alloca tutti i
+  \code{MAXPROC} PCB disponibili verificando che nessuna allocazione
+  fallisca, poi verifica che un'allocazione \emph{oltre} il limite
+  restituisca \code{NULL}; libera 10 PCB per riportarli in free list.
+\item \textbf{Code di processi} (\code{insertProcQ}/\code{removeProcQ}/\code{
+  headProcQ}/\code{outProcQ}/\code{emptyProcQ}): costruisce una coda di 10
+  elementi, verifica che \code{headProcQ} indichi il primo inserito, toglie
+  un elemento dalla testa e uno dal centro con \code{outProcQ} (e verifica
+  che togliere un elemento \emph{non presente} restituisca \code{NULL}),
+  poi svuota la coda con \code{removeProcQ} controllando che l'ordine di
+  uscita e l'ultimo elemento estratto siano quelli attesi.
+\item \textbf{Ordinamento per priorità}: inserisce quattro PCB con priorità
+  \code{20, 10, 5, 10} (l'ultimo, \code{p2bis}, uguale al secondo) e
+  verifica che \code{removeProcQ} li restituisca nell'ordine
+  \code{p1(20)}, \code{p2(10)}, \code{p2bis(10)}, \code{p3(5)}: dimostra sia
+  l'ordinamento per priorità decrescente sia il rispetto del FIFO a parità
+  di priorità (esattamente il comportamento di \code{insertProcQ}
+  analizzato nella Sezione~\ref{sub:code-processi-fase1}).
+\item \textbf{Albero dei processi} (\code{insertChild}/\code{removeChild}/\code{
+  outChild}/\code{emptyChild}): rende 9 PCB figli di uno stesso padre,
+  verifica \code{outChild} su un figlio in mezzo alla lista e su uno non
+  presente, poi svuota l'albero con \code{removeChild} controllando che,
+  esaurita la lista, un'ulteriore chiamata restituisca \code{NULL}.
+\item \textbf{ASL} (\code{initASL}, \code{insertBlocked},
+  \code{removeBlocked}, \code{headBlocked}, \code{outBlocked}): blocca
+  processi su diversi semafori, verifica che un descrittore
+  \code{semd\_t} torni davvero alla free list quando la sua coda si
+  svuota (rispolverandolo subito dopo con un nuovo \code{insertBlocked}
+  sullo stesso indirizzo), e che \code{outBlocked} rimuova correttamente un
+  processo specifico (anche non in testa) senza poterlo rimuovere una
+  seconda volta.
+\end{enumerate}
+Se tutti i controlli passano, l'ultimo messaggio stampato è la celebre
+citazione \emph{``So Long and Thanks for All the Fish''} (Guida galattica
+per gli autostoppisti): è il segnale, familiare a chi ha seguito corsi
+analoghi altrove, che l'intera Fase 1 supera i test.
+
+\paragraph{Nota su \code{test\_asl\_manuale.c}.} Nella cartella
+\code{phase1/} è presente anche un piccolo programma
+\code{test\_asl\_manuale.c}, scritto per un test manuale rapido della sola
+ASL (usa \code{printf} e compila per l'host, \emph{non} fa parte di nessun
+target CMake): non è codice di produzione né viene eseguito
+sull'emulatore, ma uno strumento di debug estemporaneo usato durante lo
+sviluppo per ispezionare a occhio lo stato delle code dei semafori dopo
+\code{insertBlocked}/\code{removeBlocked}/\code{outBlocked}.
+
+% ============================================================
+\section{Sistema di build: \code{CMakeLists.txt} e \code{config\_machine.json}}
+% ============================================================
+
+Anche se non è ``codice del kernel'', il sistema di build va conosciuto:
+determina esattamente quali file finiscono in quale eseguibile e quale
+configurazione dell'emulatore lo carica --- è tipico che un esaminatore
+chieda ``come fai a passare dal sorgente all'esecuzione in Fase 1?''.
+
+\subsection{\code{CMakeLists.txt} --- il target \code{phase1}}
+\begin{lstlisting}
+add_link_options(-nostdlib -T ${URISCV_SRC}/uriscvcore.ldscript -march=rv32imfd)
+add_compile_options(
+    -ffreestanding -static -nostartfiles -nostdlib
+    -I${URISCV_INC}
+    -ggdb -Wall -O0 -std=gnu99
+    -march=rv32imafd -mabi=ilp32d
+)
+
+add_executable(MultiPandOS_phase1 EXCLUDE_FROM_ALL
+    ./klog.c
+    phase1/pcb.c
+    phase1/asl.c
+    phase1/p1test.c
+    ${URISCV_SRC}/crtso.S
+    ${URISCV_SRC}/liburiscv.S
+)
+
+add_custom_target(phase1
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${PROJECT_BINARY_DIR}/MultiPandOS_phase1
+        ${PROJECT_BINARY_DIR}/MultiPandOS
+    COMMAND uriscv-elf2uriscv -k ${PROJECT_BINARY_DIR}/MultiPandOS
+    BYPRODUCTS MultiPandOS.core.uriscv MultiPandOS.stab.uriscv
+    DEPENDS MultiPandOS_phase1
+)
+\end{lstlisting}
+Le opzioni di compilazione globali (\code{add\_compile\_options},
+\code{add\_link\_options}, applicate a tutti e tre i target) riflettono la
+natura ``freestanding'' del kernel: \code{-ffreestanding -nostdlib
+-nostartfiles} escludono la libc standard e il normale runtime C (non
+esiste un sistema operativo sottostante che fornisca queste cose: \emph{è}
+il progetto stesso a doverle sostituire, es. con \code{crtso.S} al posto
+del solito \code{crt0}), \code{-march=rv32imafd -mabi=ilp32d} fissano
+l'architettura RISC-V a 32 bit con estensioni intero/moltiplicazione/
+float, \code{-O0} disabilita le ottimizzazioni (più facile debuggare passo
+passo nell'emulatore) e il linker script \code{uriscvcore.ldscript}
+posiziona sezioni e simboli secondo il formato \code{.core} atteso dalla
+macchina virtuale.
+
+Il target \code{phase1} compila insieme \code{klog.c}, \code{pcb.c},
+\code{asl.c} e \code{p1test.c} (più il runtime di sistema
+\code{crtso.S}/\code{liburiscv.S}, forniti dall'installazione di uRISCV,
+non dal progetto) in un unico eseguibile \code{MultiPandOS\_phase1}; il
+target \emph{custom} \code{phase1} lo copia come \code{MultiPandOS}, lo
+converte con \code{uriscv-elf2uriscv -k} nel formato \code{.core} atteso
+dall'emulatore (producendo \code{build/MultiPandOS.core.uriscv} e la
+relativa tabella dei simboli \code{.stab.uriscv}, usata dal debugger per
+mostrare nomi di funzione/variabile invece dei soli indirizzi). I target
+\code{phase2} e \code{phase3} (analizzati nei rispettivi documenti) seguono
+esattamente la stessa struttura, cambiando solo l'elenco dei sorgenti.
+\code{EXCLUDE\_FROM\_ALL} evita che un semplice \code{make} (senza
+specificare il target) provi a compilare tutti e tre insieme, dato che
+producono lo stesso file di output e si sovrascriverebbero a vicenda.
+
+\subsection{\code{config\_machine.json} --- la configurazione dell'emulatore}
+\begin{lstlisting}
+{
+    "boot": {
+        "core-file": "build/MultiPandOS.core.uriscv",
+        "load-core-file": true
+    },
+    "bootstrap-rom": "/usr/local/share/uriscv/coreboot.rom.uriscv",
+    "clock-rate": 1,
+    "devices": {
+        "terminal0": {
+            "enabled": true,
+            "file": "term0.uriscv"
+        }
+    },
+    "execution-rom": "/usr/local/share/uriscv/exec.rom.uriscv",
+    "num-processors": 1,
+    "num-ram-frames": 64,
+    "symbol-table": {
+        "asid": 64,
+        "file": "build/MultiPandOS.stab.uriscv"
+    },
+    "tlb-floor-address": "0x0",
+    "tlb-size": 16
+}
+\end{lstlisting}
+\`E il file che l'interfaccia grafica di uRISCV/uMPS3 carica per sapere
+\emph{come} istanziare la macchina virtuale, usato sia per la Fase 1 sia
+per la Fase 2 (la Fase 3 usa invece \code{phase3\_config\_machine.json},
+descritto nel documento di Fase 3). Campi rilevanti:
+\begin{itemize}
+\item \code{boot.core-file}: il file \code{.core} da caricare all'avvio
+  --- esattamente il file prodotto dal target CMake attivo per ultimo
+  (da qui l'avvertenza pratica: bisogna \emph{sempre} ricompilare il target
+  giusto prima di avviare l'emulatore, altrimenti gira il kernel di
+  un'altra fase).
+\item \code{bootstrap-rom}/\code{execution-rom}: le ROM del firmware
+  dell'emulatore stesso (BIOS), fornite dall'installazione di uRISCV, non
+  dal progetto: sono il ``livello 1'' (firmware) della gerarchia descritta
+  nell'introduzione.
+\item \code{devices.terminal0}: l'unico device configurato in questa fase
+  è un terminale (\code{term0.uriscv}, un file che l'emulatore usa per
+  registrare/riprodurre l'input-output del terminale). Niente device flash:
+  non serve memoria virtuale né backing store finché non si arriva alla
+  Fase 3.
+\item \code{num-ram-frames}: 64 frame di RAM fisica disponibili (sufficienti
+  per il piccolo kernel di Fase 1/2, che non ha bisogno dei 32 frame
+  riservati al Nucleus più i 16 dello Swap Pool della Fase 3 --- si
+  confronti con i 256 frame di \code{phase3\_config\_machine.json}).
+\item \code{symbol-table}: la tabella dei simboli generata insieme al file
+  \code{.core} (\code{MultiPandOS.stab.uriscv}), usata dal debugger
+  integrato per mostrare nomi simbolici.
+\item \code{tlb-floor-address: "0x0"}: in Fase 1/2 non esiste alcuno spazio
+  utente separato da proteggere con la paginazione, quindi il TLB non ha
+  bisogno di un indirizzo di soglia diverso da zero (si confronti con
+  \code{"0x80000000"} in Fase 3, che corrisponde proprio all'inizio di
+  \code{kuseg}).
+\end{itemize}
+
+\end{document}

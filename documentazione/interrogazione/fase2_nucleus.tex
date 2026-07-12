@@ -1,0 +1,1793 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[italian]{babel}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{codebg}{rgb}{0.96,0.96,0.96}
+\definecolor{kw}{rgb}{0.0,0.2,0.6}
+\definecolor{cmt}{rgb}{0.3,0.5,0.3}
+
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  backgroundcolor=\color{codebg},
+  keywordstyle=\color{kw}\bfseries,
+  commentstyle=\color{cmt}\itshape,
+  frame=single,
+  framesep=4pt,
+  breaklines=true,
+  showstringspaces=false,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  language=C,
+  tabsize=4
+}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\func}[1]{\textbf{\texttt{#1}}}
+
+
+\titleformat{\section}{\large\bfseries\color{kw}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\itshape}{\thesubsubsection}{0.6em}{}
+
+\setlist{itemsep=1pt,topsep=2pt}
+
+\title{\textbf{PandOSsh --- Fase 2}\\[2pt]
+\large Il Nucleus: inizializzazione, scheduler, eccezioni, interrupt\\
+\normalsize Guida dettagliata riga per riga, funzione per funzione}
+\author{Materiale di studio per l'interrogazione}
+\date{A.A. 2025/2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section{Introduzione generale alla Fase 2}
+% ============================================================
+
+La \textbf{Phase 2} costruisce, sopra le strutture dati della Fase 1, il
+\textbf{Nucleus}: il kernel vero e proprio di PandOSsh. È il primo livello
+del sistema che gira in modo autonomo, gestendo il ciclo di vita completo dei
+processi, la loro schedulazione, le eccezioni (incluse le \emph{system
+call}) e gli \emph{interrupt}. Il Nucleus gira sempre in kernel-mode, con
+gli interrupt disabilitati nei tratti critici, e --- come tutto il progetto
+--- senza mai allocare memoria dinamicamente.
+
+Il codice è distribuito su quattro moduli, ciascuno con una responsabilità
+precisa:
+\begin{center}
+\begin{tabular}{@{}llp{7.7cm}@{}}
+\toprule
+\textbf{File} & \textbf{Ruolo} \\
+\midrule
+\code{initial.c} & Bootstrap: popola il Pass Up Vector, inizializza la Fase 1
+  e le strutture globali, crea il primo processo, avvia lo scheduler. \\
+\code{scheduler.c} & Politica di scheduling: round-robin con priorità,
+  rilevamento del ``sistema fermo'' (halt/wait/deadlock). \\
+\code{exceptions.c} & Punto di ingresso di \emph{tutte} le eccezioni
+  sincrone: le 10 system call del Nucleus, i page fault, i program trap, il
+  meccanismo di \emph{pass-up-or-die}. \\
+\code{interrupts.c} & Gestione degli interrupt asincroni: fine time-slice
+  (PLT), tick dello pseudo-clock (Interval Timer), completamento di
+  operazioni di I/O sui device. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Idea chiave.} Il Nucleus non sa \emph{nulla} della memoria
+virtuale o delle U-proc della Fase 3: quando incontra un'eccezione che non
+sa gestire (page fault, program trap generico), la ``passa su'' al livello
+superiore tramite il meccanismo \code{passUpOrDie}, oppure termina il
+processo se questo non ha un livello superiore a cui rivolgersi. Questo
+disaccoppiamento è ciò che rende la Fase 3 costruibile \emph{sopra} la Fase
+2 \emph{senza modificarla}.
+
+% ============================================================
+\section{Vocabolario hardware necessario}
+% ============================================================
+
+\begin{description}[style=nextline,leftmargin=0pt]
+\item[Kernel vs user mode] Il campo \code{MPP} nel registro \code{status}
+  distingue kernel-mode (\code{M}, privilegiato: 0x1800) da user-mode
+  (\code{U}: 0). Il Nucleus gira sempre in kernel-mode.
+\item[Eccezione vs interrupt] Entrambe deviano il flusso al gestore
+  installato nel \emph{Pass Up Vector}. Un'\textbf{eccezione} è sincrona
+  (causata dall'istruzione corrente: \code{ecall}, accesso a memoria non
+  valido). Un \textbf{interrupt} è asincrono (un device o un timer che
+  segnala un evento). Si distinguono guardando il \textbf{bit 31} del
+  registro \code{cause} salvato: se acceso, è un interrupt; altrimenti il
+  campo basso (\code{ExcCode}) indica il tipo preciso di eccezione.
+\item[BIOSDATAPAGE] Indirizzo fisso (\code{0x0FFFF000}) dove il firmware
+  salva lo stato completo del processore (\code{state\_t}) nel momento in
+  cui avviene un'eccezione/interrupt. Il Nucleus lo interpreta come
+  \code{savedState}.
+\item[Pass Up Vector] Tabella fissa (\code{0x0FFFF900}) che dice al firmware
+  \emph{dove saltare} in caso di eccezione: contiene due coppie
+  (indirizzo dell'handler, stack pointer da usare), una per il
+  \emph{TLB-Refill event} e una per tutte le altre eccezioni.
+\item[TOD / PLT / Interval Timer] \code{TOD} (Time Of Day) è l'orologio
+  assoluto, letto con \code{STCK}, usato per misurare il tempo CPU. Il
+  \textbf{PLT} (Processor Local Timer) è il timer che genera l'interrupt di
+  fine time-slice (preemption), impostato con \code{setTIMER}.
+  L'\textbf{Interval Timer} è il timer di sistema che batte lo
+  \emph{pseudo-clock} ogni \code{PSECOND} (100\,ms), riarmato con
+  \code{LDIT}.
+\end{description}
+
+\subsection{Le primitive della libreria \code{uriscv/liburiscv.h}}
+Tutte le funzioni in \code{MAIUSCOLO} (\code{STCK}, \code{LDST}, \ldots)
+che compaiono nel codice dei tre documenti \textbf{non sono funzioni del
+progetto}: sono primitive fornite dalla SDK dell'emulatore
+(\code{uriscv/liburiscv.h}), implementate in assembly, che eseguono
+un'istruzione macchina privilegiata o accedono direttamente ai registri
+del processore. Vale la pena avere un riferimento unico di cosa fa
+ciascuna, dato che vengono usate in continuazione senza ulteriori
+spiegazioni nei listati:
+
+\begin{center}
+\begin{longtable}{@{}llp{7.8cm}@{}}
+\toprule
+\textbf{Primitiva} & \textbf{Categoria} & \textbf{Cosa fa} \\
+\midrule
+\code{SYSCALL(n,a1,a2,a3)} & syscall & Esegue l'istruzione \code{ecall}
+  con \code{n} in \code{a0} e gli argomenti in \code{a1--a3}: genera
+  l'eccezione che porta a \code{syscallHandler} (Nucleus) o
+  \code{supSyscallHandler} (Support Level). Ritorna il valore lasciato in
+  \code{a0} dal gestore. \`E l'\emph{unico} modo con cui un processo
+  comunica con un livello sottostante. \\
+\code{STCK(v)} & tempo & Legge il TOD (Time-Of-Day) corrente nella
+  variabile \code{v}: la base di ogni misura di tempo (contabilità CPU,
+  \code{GETTIME}, \code{CLOCKWAIT}). \\
+\code{STST(statep)} & stato & \emph{Store State}: salva lo stato
+  \emph{corrente} del processore in \code{*statep}. Usata solo dal test
+  driver \code{p2test.c} per catturare un template di stato da cui partire
+  nel costruire gli stati iniziali dei processi di test. \\
+\code{LDST(statep)} & stato & \emph{Load State}: carica \code{*statep} nel
+  processore e \textbf{riprende l'esecuzione da lì} --- non ritorna mai al
+  chiamante. \`E l'istruzione con cui lo scheduler avvia/riprende un
+  processo, e con cui ogni gestore di eccezione ``chiude'' la gestione
+  restituendo il controllo. \\
+\code{LDCXT(sp,status,pc)} & pass-up & \emph{Load Context}: come
+  \code{LDST}, ma invece di un intero \code{state\_t} prende separatamente
+  i tre valori di un \code{context\_t} (si veda il documento di Fase 1) e
+  salta lì --- è il meccanismo con cui \code{passUpOrDie} trasferisce il
+  controllo al Support Level. \\
+\code{WAIT()} & CPU & Sospende la CPU a basso consumo finché non arriva un
+  interrupt (usata dallo scheduler quando non c'è nulla di pronto ma
+  qualcuno è soft-blocked). \\
+\code{PANIC()} & arresto & Arresta la macchina virtuale segnalando un
+  errore fatale/irrecuperabile (deadlock, invariante violato). \\
+\code{HALT()} & arresto & Arresta la macchina virtuale in modo
+  ``pulito'', quando \code{processCount == 0}: è la conclusione normale
+  del sistema. \\
+\code{setTIMER(v)} & timer & Carica il valore \code{v} nel PLT (Processor
+  Local Timer): allo scadere genera l'interrupt \code{excCode == 7}.
+  Caricato con \code{NEVER} per disarmarlo. \\
+\code{LDIT(v)} & timer & Carica il valore \code{v} nell'Interval Timer
+  (riarmato a ogni tick con \code{PSECOND}, cioè ogni 100\,ms). \\
+\code{getSTATUS()} / \code{setSTATUS(v)} & registri & Leggono/scrivono il
+  registro \code{status} \emph{corrente} del processore (diverso da
+  \code{state\_t->status}, che è una \emph{copia salvata}): usate per
+  abilitare/disabilitare bit specifici a runtime (es. il PLT prima di un
+  \code{WAIT}, o gli interrupt attorno a un aggiornamento di TLB in Fase
+  3). \\
+\code{setMIE(v)} & registri & Scrive la maschera delle sorgenti di
+  interrupt abilitate (es. \code{MIE\_ALL \& \textasciitilde
+  MIE\_MTIE\_MASK} per abilitare tutto tranne il PLT). \\
+\code{TLBCLR()} & TLB & Invalida (azzera) tutte le entry del TLB. \\
+\code{TLBWR()} & TLB & \emph{TLB Write Random}: scrive una nuova
+  traduzione (da \code{ENTRYHI}/\code{ENTRYLO}) in una entry del TLB
+  scelta automaticamente dall'hardware. Usata sia dal TLB-Refill handler
+  sia dal Pager (Fase 3) per installare una traduzione. \\
+\code{setENTRYHI(v)} / \code{setENTRYLO(v)} & TLB & Impostano i registri
+  di appoggio \code{EntryHI}/\code{EntryLO} \emph{prima} di una
+  \code{TLBWR}: rispettivamente VPN+ASID e PFN+bit di controllo
+  (\code{V}, \code{D}) della traduzione da scrivere. \\
+\bottomrule
+\end{longtable}
+\end{center}
+Nessuna di queste primitive è definita nel codice del progetto: sono
+dichiarate \code{extern} in \code{uriscv/liburiscv.h} e la loro
+implementazione reale (poche istruzioni assembly ciascuna) vive
+nell'installazione della SDK dell'emulatore, non nei sorgenti consegnati.
+
+% ============================================================
+\section{\code{phase2/headers/globals.h} --- le variabili globali del Nucleus}
+% ============================================================
+
+\begin{lstlisting}
+extern int processCount;
+extern int softBlockCount;
+extern struct list_head readyQueue;
+extern pcb_t *currentProcess;
+extern pcb_t *yieldedProcess;
+extern pcb_t *activeProcs[MAXPROC];
+
+#define DEV_SEM_BASE(line, dev) (((line) - 3) * 8 + (dev))
+#define TERM_TX_SEM(dev)  (32 + (dev))
+#define TERM_RX_SEM(dev)  (40 + (dev))
+#define PSEUDOCLK_SEM           48
+#define TOT_SEMS                49
+
+extern int devSems[TOT_SEMS];
+extern cpu_t startTOD;
+\end{lstlisting}
+
+Tutte queste variabili sono \emph{definite} (con lo storage reale) in
+\code{initial.c} e dichiarate \code{extern} qui per essere condivise dagli
+altri tre moduli.
+
+\begin{itemize}
+\item \code{processCount}: numero di processi \textbf{vivi} (creati e non
+  ancora terminati), in qualunque stato (pronto, in esecuzione, bloccato).
+  Quando arriva a 0 significa che tutto il lavoro del sistema è concluso.
+\item \code{softBlockCount}: numero di processi bloccati in attesa di un
+  evento \emph{esterno asincrono} (un device o lo pseudo-clock). Serve allo
+  scheduler per distinguere ``sto aspettando un interrupt'' da ``sono in
+  deadlock''.
+\item \code{readyQueue}: la coda dei processi pronti, ordinata per priorità
+  (vedi \code{insertProcQ} in Fase 1).
+\item \code{currentProcess}: puntatore al PCB del processo in esecuzione in
+  questo momento, oppure \code{NULL} se nessun processo sta girando (il
+  Nucleus stesso è ``tra'' due processi).
+\item \code{yieldedProcess}: puntatore temporaneo usato per implementare la
+  syscall \code{YIELD} (SYS10): tiene il processo che ha appena ceduto
+  volontariamente la CPU, in modo che lo scheduler possa decidere se farlo
+  ripartire subito o dargli priorità inferiore rispetto a un altro processo
+  pronto di pari o maggiore priorità.
+\item \code{activeProcs[MAXPROC]}: array di puntatori a \emph{tutti} i
+  processi vivi (non solo quelli pronti). \`E una struttura \textbf{aggiunta
+  rispetto alla specifica minima} di Pandos, introdotta per due motivi
+  precisi: (1) la syscall \code{TERMPROCESS} deve poter trovare un processo
+  \emph{per PID} anche se questo è bloccato (quindi non nella
+  \code{readyQueue}); (2) lo scheduler deve poter distinguere in modo
+  affidabile la condizione di deadlock. Il costo è $O(\text{MAXPROC})$ per
+  ricerca/inserimento/rimozione, accettabile dato il limite fisso di 20
+  processi.
+\item \code{devSems[49]}: array dei semafori dei device. I primi 48 elementi
+  coprono le 5 linee di interrupt esterne (disk, flash, ethernet, printer,
+  terminal) $\times$ 8 device ciascuna secondo la formula
+  \code{DEV\_SEM\_BASE(line, dev) = (line-3)*8 + dev}; per i terminali,
+  che hanno due sotto-canali indipendenti (trasmissione e ricezione), si
+  usano indici dedicati \code{TERM\_TX\_SEM}/\code{TERM\_RX\_SEM} (che di
+  fatto sovrascrivono/estendono lo spazio della linea terminale, indici
+  32--47). L'ultimo elemento, indice 48 (\code{PSEUDOCLK\_SEM}), è il
+  semaforo dello pseudo-clock.
+\item \code{startTOD}: valore del TOD registrato all'ultimo punto in cui si
+  è iniziato a ``contare'' il tempo CPU del processo corrente (dispatch,
+  syscall, interrupt): confrontato con il TOD attuale permette di calcolare
+  quanti cicli attribuire a \code{p\_time}.
+\end{itemize}
+
+% ============================================================
+\section{\code{phase2/debug.h} --- macro di debug condizionale}
+% ============================================================
+
+Prima di entrare nei quattro moduli veri e propri, vale la pena conoscere
+\code{debug.h}: è incluso da \emph{tutti} (\code{initial.c},
+\code{scheduler.c}, \code{exceptions.c}, \code{interrupts.c}) e definisce
+il meccanismo di stampa usato per tracciare l'esecuzione del Nucleus a
+runtime.
+
+\begin{lstlisting}
+#define DEBUG_INIT 0
+#define DEBUG_SCHED 0
+#define DEBUG_EXC 0
+#define DEBUG_INT 0
+
+#define DEBUG_ENABLED 1
+
+#if DEBUG_ENABLED
+#define DELAY() for (volatile int i = 0; i < 60; i++)
+static inline void debug_print(const char *msg) {
+    unsigned int *command = (unsigned int *)(0x10000254 + 3*4);
+    while (*msg != '\0') {
+        *command = 2 | (((unsigned int)*msg) << 8);
+        DELAY();
+        msg++;
+    }
+}
+static inline void debug_hex(const char *label, unsigned int val) {
+    /* stampa label seguita dal valore in esadecimale a 8 cifre */
+}
+#else
+#define debug_print(msg) ((void)0)
+#define debug_hex(label, val) ((void)0)
+#endif
+#endif
+\end{lstlisting}
+
+\begin{itemize}
+\item \textbf{Due livelli di controllo indipendenti}: un interruttore
+  \emph{globale} (\code{DEBUG\_ENABLED}) e quattro interruttori
+  \emph{per modulo} (\code{DEBUG\_INIT}, \code{DEBUG\_SCHED},
+  \code{DEBUG\_EXC}, \code{DEBUG\_INT}). Ogni modulo, in testa al proprio
+  file, ridefinisce le macro \code{IDBG}/\code{SDBG}/\code{EDBG} (con nome
+  diverso solo per evitare collisioni tra moduli) in base al proprio flag:
+  se attivo, espandono a \code{debug\_print}/\code{debug\_hex}; se
+  disattivo, espandono a \code{((void)0)} (un'istruzione nulla, eliminata
+  dal compilatore, così da non lasciare \emph{alcun} costo a runtime quando
+  il debug è spento). Nella versione consegnata tutti e quattro i flag di
+  modulo sono a \code{0}: il debug è disattivabile modulo per modulo senza
+  ricompilare tutto il progetto, ma di default è silenzioso.
+\item \code{debug\_print(msg)}: scrive una stringa \textbf{direttamente sui
+  registri hardware del terminale 0} (indirizzo \code{0x10000254 + 3*4},
+  cioè il registro di comando della trasmissione), un carattere alla
+  volta, con un comando \code{PRINTCHR} (\code{2}) composto a mano
+  (carattere nel byte alto, opcode nel byte basso) --- \textbf{non} passa
+  mai da \code{DOIO}: è pensato per stampare diagnostica \emph{anche prima}
+  che il Nucleus sia in grado di gestire syscall e interrupt correttamente
+  (utile per debuggare proprio \code{initial.c} durante il boot), o
+  comunque senza dipendere dal meccanismo che si starebbe cercando di
+  diagnosticare.
+\item \code{DELAY()}: un ciclo di attesa attiva (\emph{busy-wait}) da 60
+  iterazioni tra un carattere e l'altro, necessario perché la scrittura sul
+  registro di comando non è istantanea: senza una pausa minima, caratteri
+  scritti troppo rapidamente in successione andrebbero persi (nessun
+  meccanismo di sincronizzazione reale è coinvolto, è un semplice ritardo
+  empirico).
+\item \code{debug\_hex(label, val)}: come \code{debug\_print}, ma stampa
+  anche un valore a 32 bit convertito manualmente in 8 cifre esadecimali
+  (utile per stampare indirizzi di semafori, PID, valori di registri senza
+  dover comporre a mano la stringa a ogni chiamata).
+\end{itemize}
+\`E lo strumento di debug \emph{effettivamente usato} durante lo sviluppo
+del Nucleus (a differenza di \code{klog.c}, discusso nel documento di Fase
+1, che è compilato ma mai invocato): le chiamate a \code{IDBG\_HEX},
+\code{SDBG}, \code{EDBG\_HEX}, ecc.\ visibili nei listati dei moduli
+successivi sono per l'appunto invocazioni di queste macro.
+
+% ============================================================
+\section{\code{phase2/initial.c} --- inizializzazione del sistema}
+% ============================================================
+
+\subsection{Variabili globali definite qui}
+\begin{lstlisting}
+int              processCount;
+int              softBlockCount;
+struct list_head readyQueue;
+pcb_t           *currentProcess;
+int              devSems[TOT_SEMS];
+cpu_t            startTOD;
+pcb_t           *activeProcs[MAXPROC];
+pcb_t           *yieldedProcess = NULL;
+\end{lstlisting}
+Questo è l'\emph{unico} punto del progetto in cui queste variabili vengono
+effettivamente allocate (storage reale); ovunque altrove sono \code{extern}.
+
+\subsection{\func{main} --- la funzione di bootstrap}
+\begin{lstlisting}
+int main(void) {
+    passupvector_t *passUpVec = (passupvector_t *) PASSUPVECTOR;
+    memaddr ramtop;
+    RAMTOP(ramtop);
+
+    passUpVec->tlb_refill_handler  = (memaddr) uTLB_RefillHandler;
+    passUpVec->tlb_refill_stackPtr = ramtop;
+    passUpVec->exception_handler   = (memaddr) exceptionHandler;
+    passUpVec->exception_stackPtr  = ramtop - PAGESIZE;
+
+    initPcbs();
+    initASL();
+
+    processCount   = 0;
+    softBlockCount = 0;
+    currentProcess = NULL;
+    mkEmptyProcQ(&readyQueue);
+
+    for (int i = 0; i < TOT_SEMS; i++) devSems[i] = 0;
+
+    STCK(startTOD);
+
+    for (int i = 0; i < MAXPROC; i++)
+        activeProcs[i] = NULL;
+
+    LDIT(PSECOND);
+
+    pcb_t *testPcb = allocPcb();
+    if (testPcb == NULL) PANIC();
+
+    testPcb->p_s.status      = MSTATUS_MIE_MASK | MSTATUS_MPIE_MASK | MSTATUS_MPP_M;
+    testPcb->p_s.mie         = MIE_ALL;
+    testPcb->p_s.reg_sp      = ramtop - (2 * PAGESIZE);
+    testPcb->p_s.pc_epc      = (memaddr) test;
+    testPcb->p_prio          = PROCESS_PRIO_LOW;
+
+    activeProcs[0] = testPcb;
+    insertProcQ(&readyQueue, testPcb);
+    processCount = 1;
+
+    scheduler();
+    return 0;
+}
+\end{lstlisting}
+
+Passo per passo:
+
+\begin{enumerate}
+\item \textbf{Calcolo di \code{ramtop}.} La macro \code{RAMTOP(ramtop)}
+  legge dai registri di configurazione della macchina (\code{RAMBASEADDR},
+  \code{RAMBASESIZE}) l'indirizzo del \emph{primo byte oltre la fine della
+  RAM} disponibile.
+
+\item \textbf{Popolamento del Pass Up Vector.} Il Nucleus registra se stesso
+  come gestore \emph{unico} di tutte le eccezioni hardware:
+  \begin{itemize}
+  \item \code{exception\_handler = exceptionHandler}: qualunque eccezione
+    ``normale'' (syscall, program trap, page fault non-refill) salta a
+    \code{exceptionHandler} (in \code{exceptions.c});
+  \item \code{tlb\_refill\_handler = uTLB\_RefillHandler}: il caso speciale
+    di TLB-Refill (percorso veloce, vedi Fase 3) salta a un handler
+    dedicato;
+  \item \textbf{scelta implementativa importante}: gli stack di questi due
+    gestori sono impostati sui \emph{due frame più alti della RAM}
+    (\code{ramtop} per il TLB-Refill, \code{ramtop - PAGESIZE} per le
+    eccezioni), \emph{non} su un unico indirizzo fisso condiviso
+    (\code{KERNELSTACK}). Motivo: se si usasse un solo stack, un'eccezione
+    che avviene \emph{durante} la gestione di un'altra (eccezioni annidate,
+    possibili perché nulla vieta a un TLB-Refill di avvenire mentre gira
+    l'exception handler) sovrascriverebbe lo stack dell'altro handler,
+    corrompendone lo stato. Isolarli su due frame fisici separati elimina
+    questo rischio.
+  \end{itemize}
+
+\item \textbf{Inizializzazione della Fase 1.} \code{initPcbs()} e
+  \code{initASL()} preparano le free list dei PCB e dei descrittori di
+  semaforo (vedi documento di Fase 1).
+
+\item \textbf{Azzeramento delle strutture globali del Nucleus}:
+  \code{processCount}, \code{softBlockCount}, \code{currentProcess = NULL},
+  \code{readyQueue} vuota, tutti i 49 \code{devSems} a 0 (semantica a
+  contatore: valore iniziale 0, non negativo, perché nessun processo è
+  ancora bloccato su di essi).
+
+\item \textbf{Lettura del TOD reale} (\code{STCK(startTOD)}) invece di
+  azzerare \code{startTOD}. Se si azzerasse, il primo processo creato
+  ``erediterebbe'' come tempo CPU l'intero intervallo trascorso dall'avvio
+  della macchina virtuale fino a questo punto del bootstrap (che può essere
+  non trascurabile), falsando la contabilità di \code{GETTIME}.
+
+\item \code{activeProcs[i] = NULL} per tutti gli slot: nessun processo vivo
+  ancora.
+
+\item \textbf{Avvio dell'Interval Timer}: \code{LDIT(PSECOND)} programma il
+  primo tick dello pseudo-clock tra 100\,000 microsecondi (100\,ms,
+  \code{PSECOND} in \code{const.h}).
+
+\item \textbf{Creazione del processo iniziale} (`test`, il punto di ingresso
+  della Fase 2/3 --- in Fase 2 puro esegue i test P2, in Fase 3 è
+  l'\code{InstantiatorProcess}): si alloca un PCB con \code{allocPcb()}
+  (fallimento $\to$ \code{PANIC()}, situazione impossibile dato che la free
+  list è appena stata popolata con 20 slot), e si configura manualmente lo
+  stato iniziale del processore:
+  \begin{itemize}
+  \item \code{status}: interrupt abilitati (\code{MIE}), interrupt
+    ``precedenti'' abilitati (\code{MPIE}, ripristinati automaticamente al
+    primo \code{LDST}), \code{MPP} = kernel-mode (\code{MPP\_M}) --- il
+    processo test gira in kernel-mode, non è una U-proc;
+  \item \code{mie = MIE\_ALL}: tutte le sorgenti di interrupt abilitate a
+    livello di maschera;
+  \item \code{reg\_sp = ramtop - 2*PAGESIZE}: lo stack del processo test è
+    posizionato \emph{sotto} i due frame riservati agli handler del kernel
+    (che occupano \code{ramtop} e \code{ramtop-PAGESIZE}), evitando ogni
+    sovrapposizione;
+  \item \code{pc\_epc = (memaddr) test}: il processo parte eseguendo la
+    funzione \code{test} (definita in \code{p2test.c} per la Fase 2 pura, o
+    in \code{phase3/initProc.c} per la Fase 3, a seconda del target di
+    compilazione);
+  \item \code{p\_prio = PROCESS\_PRIO\_LOW}: priorità bassa (0).
+  \end{itemize}
+  Il PCB viene poi registrato in \code{activeProcs[0]}, inserito nella
+  \code{readyQueue}, e \code{processCount} viene impostato a 1.
+
+\item \textbf{Avvio dello scheduler}: \code{scheduler()} non ritorna mai
+  (in condizioni normali termina l'esecuzione con \code{HALT()}); la riga
+  \code{return 0;} successiva è dead code raggiunto solo in caso di bug
+  grave.
+\end{enumerate}
+
+Da notare la scelta di \emph{non} duplicare in \code{main} la logica di
+selezione ``chi eseguire per primo'': si crea un solo processo pronto e si
+lascia allo \code{scheduler()} il compito di estrarlo e avviarlo, mantenendo
+tutta la logica di dispatch in un unico posto.
+
+% ============================================================
+\section{\code{phase2/scheduler.c} --- lo scheduler}
+% ============================================================
+
+\begin{lstlisting}
+void scheduler(void) {
+
+    if (yieldedProcess != NULL) {
+        pcb_t *y = yieldedProcess;
+        yieldedProcess = NULL;
+        if (!emptyProcQ(&readyQueue) &&
+            headProcQ(&readyQueue)->p_prio >= y->p_prio) {
+            insertProcQ(&readyQueue, y);
+        } else {
+            currentProcess = y;
+            STCK(startTOD);
+            setTIMER(TIMESLICE * (*((cpu_t *) TIMESCALEADDR)));
+            LDST(&currentProcess->p_s);
+        }
+    }
+
+    if (!emptyProcQ(&readyQueue)) {
+        currentProcess = removeProcQ(&readyQueue);
+        STCK(startTOD);
+        setTIMER(TIMESLICE * (*((cpu_t *) TIMESCALEADDR)));
+        LDST(&currentProcess->p_s);
+    }
+
+    currentProcess = NULL;
+
+    if (processCount == 0) {
+        HALT();
+    }
+
+    if (softBlockCount > 0) {
+        setMIE(MIE_ALL & ~MIE_MTIE_MASK);
+        unsigned int status = getSTATUS();
+        status |= MSTATUS_MIE_MASK;
+        setSTATUS(status);
+        WAIT();
+    }
+
+    PANIC();
+}
+\end{lstlisting}
+
+La politica implementata è un \textbf{round-robin con priorità}: tra i
+processi pronti si sceglie sempre il più prioritario (grazie
+all'ordinamento già garantito da \code{insertProcQ} in Fase 1); a parità di
+priorità, l'ordine di arrivo (FIFO) decide chi va per primo, e ciascuno gira
+per al massimo una \emph{time slice} prima di essere rimesso in coda (dal
+gestore dell'interrupt PLT).
+
+\subsection{Passo 0 --- gestione dello YIELD}
+\label{sub:yield-scheduler}
+Se \code{yieldedProcess} non è \code{NULL} (un processo ha appena eseguito
+la syscall \code{YIELD}, SYS10), lo scheduler decide se rimetterlo
+\emph{immediatamente} in coda oppure farlo ripartire subito:
+\begin{itemize}
+\item se la ready queue \emph{non} è vuota e il processo in testa ha
+  priorità $\ge$ a quella dello yielder $\to$ lo yielder \emph{cede
+  davvero}: viene reinserito in coda con \code{insertProcQ} (che lo
+  posizionerà secondo la sua priorità), e si prosegue al passo successivo
+  (che estrarrà dalla coda il processo più prioritario, possibilmente lo
+  stesso yielder se nel frattempo nessuno lo ha superato --- ma tipicamente
+  un altro);
+\item altrimenti (coda vuota, oppure lo yielder è comunque il più
+  prioritario disponibile) \code{currentProcess} diventa di nuovo lo
+  yielder: si registra il TOD, si riarma il PLT con una nuova time slice
+  completa, e si riparte con \code{LDST}. \emph{Senza} questo ramo, uno
+  \code{YIELD} in un sistema con un solo processo pronto risulterebbe in un
+  \code{removeProcQ} seguito da un nuovo giro immediato comunque, ma la
+  gestione esplicita rende il comportamento uniforme ed evita una doppia
+  ri-scansione della coda.
+\end{itemize}
+
+\subsection{Passo 1 --- dispatch di un processo pronto}
+Se la ready queue non è vuota, se ne estrae la testa
+(\code{removeProcQ}, $O(1)$, rispetta la priorità), si registra
+\code{startTOD} (per la contabilità del tempo CPU che seguirà), si carica
+nel PLT una nuova \textbf{time slice} pari a \code{TIMESLICE *
+TIMESCALEADDR} (\code{TIMESLICE = 5\,000\,000}, moltiplicato per il fattore
+di scala del TOD letto dal registro hardware \code{TIMESCALEADDR}, per
+ottenere il valore corretto nell'unità di tempo della macchina), e si
+riprende l'esecuzione del processo con \code{LDST} (Load State: ripristina
+tutti i registri e il PC dal \code{p\_s} salvato, e non ritorna mai al
+chiamante --- è un vero e proprio salto).
+
+\subsection{Passi 2--4 --- il sistema è ``fermo''}
+Se si arriva qui, non c'era nessun processo pronto da eseguire
+(\code{currentProcess} viene esplicitamente riportato a \code{NULL}): lo
+scheduler distingue tre possibili situazioni, in ordine:
+\begin{enumerate}
+\item \textbf{\code{processCount == 0}}: non esiste più nessun processo
+  vivo, tutto il lavoro del sistema è concluso $\to$ \code{HALT()} ferma
+  la macchina virtuale.
+\item \textbf{\code{softBlockCount > 0}}: esistono processi vivi ma
+  \emph{tutti} sono in attesa di un evento esterno (I/O o pseudo-clock).
+  Il Nucleus non ha nulla da eseguire ma \emph{non} deve fermarsi: entra in
+  \code{WAIT()} (istruzione che sospende la CPU a basso consumo finché non
+  arriva un interrupt). Prima di farlo, abilita tutti gli interrupt
+  \textbf{tranne} il PLT (\code{MIE\_ALL \& \textasciitilde
+  MIE\_MTIE\_MASK}): non ha senso ricevere un interrupt di fine time-slice
+  quando nessun processo sta effettivamente ``consumando'' uno slice, e si
+  evita così un interrupt PLT spurio (che complicherebbe inutilmente la
+  gestione, dato che \code{currentProcess} sarebbe \code{NULL}).
+\item \textbf{Altrimenti} (processi vivi, nessuno pronto, nessuno
+  soft-blocked): è un vero \textbf{deadlock} --- non esiste alcun evento
+  futuro (né un dispatch, né un interrupt atteso) che possa far progredire
+  il sistema. Si chiama \code{PANIC()}, che arresta la macchina segnalando
+  l'errore.
+\end{enumerate}
+
+% ============================================================
+\section{\code{phase2/exceptions.c} --- eccezioni e system call}
+% ============================================================
+
+Questo è il modulo più corposo del Nucleus. Gestisce: il TLB-Refill event
+(percorso condizionale per la Fase 3), il dispatch di tutte le eccezioni
+sincrone, l'implementazione delle 10 syscall del Nucleus, la terminazione
+ricorsiva dei processi, e il meccanismo di pass-up-or-die.
+
+\subsection{Funzioni di utilità (\code{static})}
+
+\begin{lstlisting}
+static void copyState(state_t *dst, state_t *src) {
+    unsigned int *d = (unsigned int *) dst;
+    unsigned int *s = (unsigned int *) src;
+    for (int i = 0; i < STATE_T_SIZE_IN_BYTES / WORDLEN; i++)
+        d[i] = s[i];
+}
+\end{lstlisting}
+\func{copyState}: copia byte-a-byte (in realtà word-a-word, 4 byte alla
+volta) l'intero contenuto di uno \code{state\_t} da \code{src} a
+\code{dst}, trattando le due strutture come array di interi di dimensione
+\code{STATE\_T\_SIZE\_IN\_BYTES / WORDLEN} (148/4 = 37 word). È usata al
+posto di un'assegnazione diretta \code{*dst = *src} probabilmente per
+compatibilità/chiarezza esplicita a livello di word; il risultato è
+equivalente. Serve ogni volta che occorre salvare lo stato del processore
+letto da \code{BIOSDATAPAGE} dentro il PCB del processo corrente
+(\code{currentProcess->p\_s}), tipicamente prima di bloccare o rischedulare
+il processo.
+
+\begin{lstlisting}
+static void updateCPUTime(void) {
+    if (currentProcess) {
+        cpu_t now;
+        STCK(now);
+        currentProcess->p_time += now - startTOD;
+        startTOD = now;
+    }
+}
+\end{lstlisting}
+\func{updateCPUTime}: implementa la \textbf{contabilità del tempo CPU}. A
+ogni ``punto critico'' (ingresso in una syscall, in un interrupt, in un
+blocco) si legge il TOD corrente (\code{STCK}), si calcola il delta rispetto
+all'ultimo \code{startTOD} registrato, lo si somma a \code{p\_time} del
+processo corrente, e si aggiorna \code{startTOD} al nuovo valore. Questo
+schema, applicato sistematicamente in \emph{ogni} punto in cui il controllo
+lascia il processo corrente (anche solo temporaneamente, come durante la
+gestione di una syscall), garantisce che nessun ciclo di CPU vada perso o
+venga contato due volte, anche in presenza di eccezioni annidate o di più
+syscall consecutive nello stesso quanto di tempo.
+
+\begin{lstlisting}
+static int isDeviceSemaphore(int *semAdd) {
+    int *base = &devSems[0];
+    int *top  = &devSems[TOT_SEMS];
+    if (semAdd < base || semAdd >= top) return 0;
+    int idx = (int)(semAdd - base);
+    if (idx == PSEUDOCLK_SEM) return 0;
+    return 1;
+}
+\end{lstlisting}
+\func{isDeviceSemaphore}: distingue, dato l'indirizzo di un semaforo, se è
+un semaforo di \emph{device} (vero) oppure un semaforo ``normale'' (di
+sincronizzazione tra processi, oppure lo pseudo-clock: falso). Verifica
+prima che l'indirizzo cada dentro l'array \code{devSems} (aritmetica dei
+puntatori: confronto tra indirizzi), poi esclude esplicitamente l'ultimo
+indice (\code{PSEUDOCLK\_SEM}), che pur essendo fisicamente dentro
+\code{devSems} rappresenta lo pseudo-clock, contato separatamente. Questa
+distinzione è cruciale per \code{blockCurrentProcess}: il contatore
+\code{softBlockCount} deve incrementare per i device \emph{ma anche} per lo
+pseudo-clock (che infatti viene gestito a parte, incrementando
+esplicitamente in \code{CLOCKWAIT}) --- la funzione qui serve invece a
+\emph{escludere} lo pseudo-clock dal doppio conteggio quando ci si blocca
+tramite il percorso generico \code{blockCurrentProcess}.
+
+\begin{lstlisting}
+static void blockCurrentProcess(int *sem) {
+    if (!currentProcess) PANIC();
+    cpu_t now;
+    STCK(now);
+    currentProcess->p_time += now - startTOD;
+    startTOD = now;
+    currentProcess->p_semAdd = sem;
+    if (isDeviceSemaphore(sem)) {
+        softBlockCount++;
+    }
+    insertBlocked(sem, currentProcess);
+    currentProcess = NULL;
+    scheduler();
+}
+\end{lstlisting}
+\func{blockCurrentProcess}: centralizza la logica di blocco di
+\code{currentProcess} su un semaforo qualsiasi. Aggiorna il tempo CPU
+(stessa logica di \code{updateCPUTime}, duplicata inline), imposta
+\code{p\_semAdd}, incrementa \code{softBlockCount} \emph{solo} se il
+semaforo è un semaforo di device reale (esclude quindi sia i semafori
+``normali'' di sincronizzazione sia --- tramite \code{isDeviceSemaphore}
+--- lo pseudo-clock, il cui incremento è gestito esplicitamente dal
+chiamante quando serve, es. in \code{CLOCKWAIT}), inserisce il processo
+nella ASL con \code{insertBlocked}, azzera \code{currentProcess} e richiama
+lo scheduler. \`E la funzione invocata da \code{PASSEREN} e da \code{DOIO}
+quando il processo deve effettivamente bloccarsi.
+
+\begin{lstlisting}
+static void activeProcs_add(pcb_t *p) {
+    for (int i = 0; i < MAXPROC; i++) {
+        if (activeProcs[i] == NULL) { activeProcs[i] = p; return; }
+    }
+    PANIC();
+}
+
+static void activeProcs_remove(pcb_t *p) {
+    for (int i = 0; i < MAXPROC; i++) {
+        if (activeProcs[i] == p) { activeProcs[i] = NULL; return; }
+    }
+}
+
+static pcb_t *findProcessByPid(int target) {
+    for (int i = 0; i < MAXPROC; i++) {
+        if (activeProcs[i] != NULL && activeProcs[i]->p_pid == target)
+            return activeProcs[i];
+    }
+    return NULL;
+}
+\end{lstlisting}
+Tre funzioni di gestione dell'array \code{activeProcs}, tutte $O(\text{MAXPROC})$
+per scansione lineare:
+\begin{itemize}
+\item \func{activeProcs\_add(p)}: trova il primo slot libero
+  (\code{NULL}) e vi inserisce \code{p}. Se non trova spazio (impossibile in
+  condizioni normali, dato che \code{allocPcb} fallirebbe prima se i 20 PCB
+  sono esauriti) chiama \code{PANIC()} per difesa.
+\item \func{activeProcs\_remove(p)}: trova lo slot che contiene esattamente
+  \code{p} e lo azzera.
+\item \func{findProcessByPid(target)}: scansione lineare per trovare il
+  processo (vivo, non necessariamente pronto) con un dato PID; ritorna
+  \code{NULL} se non esiste (PID già terminato o mai esistito). Usata da
+  \code{TERMPROCESS} quando il target non è il processo corrente.
+\end{itemize}
+
+\subsection{\func{terminateProcess} --- terminazione ricorsiva}
+\begin{lstlisting}
+static void terminateProcess(pcb_t *p) {
+    if (p == NULL) return;
+    if (p->p_pid == -1) return;
+
+    p->p_pid = -1;
+
+    pcb_t *child;
+    while ((child = removeChild(p)) != NULL) {
+        terminateProcess(child);
+    }
+
+    outChild(p);
+    activeProcs_remove(p);
+
+    if (p->p_semAdd != NULL) {
+        int *sem = p->p_semAdd;
+        pcb_t *removed = outBlocked(p);
+        p->p_semAdd = NULL;
+        if (removed != NULL) {
+            if (isDeviceSemaphore(sem) || sem == &devSems[PSEUDOCLK_SEM]) {
+                softBlockCount--;
+            } else {
+                (*sem)++;
+            }
+        }
+    }
+
+    outProcQ(&readyQueue, p);
+
+    if (p == currentProcess) {
+        currentProcess = NULL;
+    }
+
+    freePcb(p);
+    processCount--;
+}
+\end{lstlisting}
+Implementa la semantica di \code{TERMPROCESS} (SYS2): terminare un processo
+significa terminare \emph{ricorsivamente tutto il sotto-albero} radicato in
+esso (i figli, i figli dei figli, ecc.), come richiesto dalla specifica di
+Pandos. Analisi:
+
+\begin{enumerate}
+\item \textbf{Guardia contro doppie terminazioni}: se \code{p} è
+  \code{NULL} o ha già \code{p\_pid == -1} (segnale interno ``sto già
+  terminando/terminato''), ritorna subito. Questo flag protegge da eventuali
+  riferimenti circolari o rientri accidentali durante la ricorsione.
+\item \code{p->p\_pid = -1}: marca \code{p} come ``in fase di
+  terminazione'' \emph{prima} di ricorrere sui figli, per evitare che una
+  struttura anomala porti a rivisitarlo.
+\item \textbf{Ricorsione sui figli}: il ciclo \code{while
+  ((child=removeChild(p)) != NULL)} stacca ripetutamente il \emph{primo}
+  figlio di \code{p} e lo termina ricorsivamente; poiché \code{removeChild}
+  accorcia la lista dei figli a ogni chiamata, il ciclo termina quando
+  \code{p} non ha più figli. Questa è una visita in stile
+  \emph{depth-first}: prima si smaltisce interamente un ramo (e i suoi
+  discendenti), poi si passa al fratello successivo.
+\item \code{outChild(p)}: stacca \code{p} stesso dalla lista dei figli del
+  \emph{proprio} padre. Necessario perché, come spiegato in Fase 1, senza
+  questo passo un processo che termina se stesso (o che viene terminato
+  senza che il padre stia già iterando su di lui) resterebbe agganciato come
+  ``figlio fantasma''.
+\item \code{activeProcs\_remove(p)}: toglie \code{p} dall'array globale dei
+  processi vivi.
+\item \textbf{Se \code{p} era bloccato su un semaforo}
+  (\code{p->p\_semAdd != NULL}): va tolto dalla coda di quel semaforo
+  (\code{outBlocked}) e --- punto delicato --- bisogna decidere \emph{cosa
+  fare del valore del semaforo}:
+  \begin{itemize}
+  \item se è un semaforo di device \emph{oppure} lo pseudo-clock: il
+    processo era ``soft-blocked'', cioè aspettava un evento che
+    \emph{arriverà comunque} dall'hardware (l'interrupt del device o il
+    prossimo tick). Il valore del semaforo \textbf{non} va toccato: sarà
+    l'interrupt (quando arriverà) a fare la sua V regolare. Si aggiorna
+    solo il contatore \code{softBlockCount--} (un processo soft-blocked in
+    meno).
+  \item altrimenti (semaforo ``normale'', di sincronizzazione tra
+    processi): la \code{P} che il processo terminato aveva eseguito
+    \emph{va annullata} incrementando il semaforo (\code{(*sem)++}),
+    altrimenti il suo valore resterebbe sbilanciato verso il basso e un
+    futuro processo che tenta la \code{P} si bloccherebbe per sempre
+    aspettando un rilascio che non arriverà mai (il processo che avrebbe
+    dovuto fare la V corrispondente non esiste più).
+  \end{itemize}
+\item \code{outProcQ(\&readyQueue, p)}: rimozione difensiva dalla ready
+  queue (se \code{p} non vi si trova, la funzione non fa nulla e ritorna
+  \code{NULL} senza errori: si veda Fase 1).
+\item Se \code{p} era \code{currentProcess}, lo si azzera esplicitamente:
+  il chiamante (\code{TERMPROCESS} in \code{syscallHandler}) userà questo
+  segnale per capire se deve richiamare direttamente lo scheduler.
+\item \code{freePcb(p)}: il PCB torna alla free list della Fase 1.
+\item \code{processCount--}: un processo vivo in meno.
+\end{enumerate}
+
+\subsection{\func{uTLB\_RefillHandler} --- TLB-Refill event}
+\begin{lstlisting}
+void uTLB_RefillHandler(void) {
+    state_t *savedState = (state_t *) BIOSDATAPAGE;
+
+#ifdef SUPPORT_LEVEL
+    unsigned int vpn = (savedState->entry_hi >> VPNSHIFT) & 0xFFFFF;
+    int index;
+    if (vpn == 0xBFFFF) index = 31;
+    else index = (int)(vpn - 0x80000);
+
+    pteEntry_t *pte = &currentProcess->p_supportStruct->sup_privatePgTbl[index];
+    setENTRYHI(pte->pte_entryHI);
+    setENTRYLO(pte->pte_entryLO);
+    TLBWR();
+    LDST(savedState);
+#else
+    setENTRYHI(0x80000000);
+    setENTRYLO(0x00000000);
+    TLBWR();
+    LDST(savedState);
+#endif
+}
+\end{lstlisting}
+Compilato \emph{condizionalmente} in base alla macro \code{SUPPORT\_LEVEL}
+(definita solo quando si compila il target \code{phase3}). Nella Fase 2
+pura non esiste memoria virtuale a livello utente: il ramo \code{\#else} è
+solo uno skeleton placeholder ereditato dal tester (scrive
+un'entry fissa per la pagina di test \code{p5}), mai realmente esercitato
+in modo significativo. Nella Fase 3 (\code{\#ifdef SUPPORT\_LEVEL}) è il
+\textbf{percorso veloce} dei page fault: quando la traduzione manca dal TLB
+\emph{ma è già presente} nella Page Table privata della U-proc
+(\code{currentProcess->p\_supportStruct->sup\_privatePgTbl}), questo
+handler si limita a copiarla dentro il TLB (\code{setENTRYHI}/\code{
+setENTRYLO}/\code{TLBWR}) e a riprendere l'esecuzione (\code{LDST}), senza
+mai coinvolgere il Pager né il disco. La discussione approfondita di questo
+meccanismo (e della distinzione rispetto al Pager) è nel documento di Fase
+3.
+
+\subsection{\func{tlbExceptionHandler} e \func{programTrapHandler}}
+\begin{lstlisting}
+static void tlbExceptionHandler(void) {
+    passUpOrDie(PGFAULTEXCEPT);
+}
+
+static void programTrapHandler(void) {
+    passUpOrDie(GENERALEXCEPT);
+}
+\end{lstlisting}
+Due semplici wrapper: qualunque eccezione di gestione memoria (page fault)
+viene delegata a \code{passUpOrDie} con tipo \code{PGFAULTEXCEPT} (0);
+qualunque altra eccezione non gestita direttamente dal Nucleus (istruzione
+illegale, misallineamento, ecc.) con tipo \code{GENERALEXCEPT} (1). Questi
+due indici corrispondono esattamente agli slot \code{[0]}/\code{[1]} degli
+array \code{sup\_exceptState}/\code{sup\_exceptContext} nella
+\code{support\_t} (Fase 1/3): è così che il Nucleus, senza sapere nulla del
+Support Level, riesce comunque a smistare l'eccezione al gestore corretto di
+livello superiore.
+
+\subsection{\func{exceptionHandler} --- il dispatcher principale}
+\begin{lstlisting}
+void exceptionHandler(void) {
+    state_t *savedState = (state_t *) BIOSDATAPAGE;
+    unsigned int cause   = savedState->cause;
+
+    updateCPUTime();
+
+    if (cause & 0x80000000) {
+        interruptHandler();
+        return;
+    }
+
+    unsigned int excCode = cause & CAUSE_EXCCODE_MASK;
+
+    switch (excCode) {
+        case EXC_ECU:
+        case EXC_ECM:
+            savedState->pc_epc += WORDLEN;
+            syscallHandler(savedState);
+            break;
+
+        case EXC_IPF:
+        case EXC_LPF:
+        case EXC_SPF:
+        case EXC_MOD:
+        case EXC_TLBL:
+        case EXC_TLBS:
+        case EXC_UTLBL:
+        case EXC_UTLBS:
+            tlbExceptionHandler();
+            break;
+
+        default:
+            programTrapHandler();
+            break;
+    }
+}
+\end{lstlisting}
+È l'\textbf{unico punto di ingresso} registrato nel Pass Up Vector per tutte
+le eccezioni non-refill. Sequenza:
+\begin{enumerate}
+\item Legge \code{savedState} da \code{BIOSDATAPAGE} e il registro
+  \code{cause} salvato dal firmware.
+\item \code{updateCPUTime()}: aggiorna \emph{subito} la contabilità del
+  tempo CPU del processo appena interrotto, prima di fare qualunque altra
+  cosa --- così anche il tempo trascorso mentre si decide cosa fare
+  dell'eccezione viene attribuito correttamente.
+\item \textbf{Bit 31 di \code{cause} acceso $\to$ interrupt}: delega
+  immediatamente a \code{interruptHandler()} (Fase 2, modulo
+  \code{interrupts.c}) e ritorna (l'interrupt handler non ritornerà mai
+  qui: fa sempre \code{LDST} o chiama lo scheduler).
+\item Altrimenti, legge il campo basso \code{excCode} e smista:
+  \begin{itemize}
+  \item \code{EXC\_ECU} (8, \code{ecall} da user-mode) o \code{EXC\_ECM}
+    (11, \code{ecall} da kernel-mode, usata dal Nucleus stesso e dai
+    processi kernel come \code{test}): \textbf{avanza il PC di una word}
+    (\code{WORDLEN=4}) \emph{prima} di gestire la syscall. Questo è
+    essenziale: senza avanzare il PC, quando il processo verrà ripreso
+    rieseguirebbe la stessa istruzione \code{ecall} all'infinito. Poi
+    chiama \code{syscallHandler(savedState)}.
+  \item un insieme di codici legati a page fault/TLB (\code{EXC\_IPF},
+    \code{EXC\_LPF}, \code{EXC\_SPF} --- i codici RISC-V standard per
+    Instruction/Load/Store Page Fault --- più i codici specifici
+    dell'architettura $\mu$RISCV \code{EXC\_MOD}, \code{EXC\_TLBL},
+    \code{EXC\_TLBS}, \code{EXC\_UTLBL}, \code{EXC\_UTLBS}): tutti trattati
+    uniformemente come ``memory management trap'' $\to$
+    \code{tlbExceptionHandler()}.
+  \item \code{default}: qualunque altra causa (istruzione illegale,
+    accesso non allineato, breakpoint, ecc.) $\to$
+    \code{programTrapHandler()}.
+  \end{itemize}
+\end{enumerate}
+
+\subsection{\func{syscallHandler} --- le 10 syscall del Nucleus}
+\begin{lstlisting}
+static void syscallHandler(state_t *savedState) {
+    int sysCode = (int) savedState->reg_a0;
+
+    if ((savedState->status & MSTATUS_MPP_MASK) == 0 && sysCode < 0) {
+        savedState->cause = PRIVINSTR;
+        programTrapHandler();
+        return;
+    }
+
+    if (sysCode >= 1) {
+        passUpOrDie(GENERALEXCEPT);
+        return;
+    }
+
+    switch (sysCode) {
+        case CREATEPROCESS: { ... }
+        case TERMPROCESS:   { ... }
+        case PASSEREN:      { ... }
+        case VERHOGEN:      { ... }
+        case DOIO:          { ... }
+        case GETTIME:       { ... }
+        case CLOCKWAIT:     { ... }
+        case GETSUPPORTPTR: { ... }
+        case GETPROCESSID:  { ... }
+        case YIELD:         { ... }
+        default:
+            passUpOrDie(GENERALEXCEPT);
+    }
+}
+\end{lstlisting}
+
+\subsubsection{Protezione dei privilegi}
+Il numero di syscall arriva in \code{a0} (convenzione RISC-V:
+\code{reg\_a0}). Le syscall del Nucleus sono numerate con valori
+\textbf{negativi} da \code{-1} (\code{CREATEPROCESS}) a \code{-10}
+(\code{YIELD}); i valori \textbf{positivi} sono riservati alle syscall del
+Support Level (Fase 3). Prima regola:
+\begin{quote}
+\code{if ((savedState->status \& MSTATUS\_MPP\_MASK) == 0 \&\& sysCode < 0)}
+\end{quote}
+Se il campo \code{MPP} dello \code{status} salvato è 0 (cioè il chiamante
+\emph{era} in \textbf{user-mode}) \emph{e} il codice richiesto è negativo
+(una syscall riservata al kernel), l'eccezione viene forzatamente
+riqualificata come \code{PRIVINSTR} (istruzione privilegiata, tentativo di
+uso non autorizzato) e delegata a \code{programTrapHandler()}: nessuna
+U-proc può invocare direttamente una syscall del Nucleus.
+
+Seconda regola: se \code{sysCode >= 1} (syscall del Support Level, di
+competenza di un livello \emph{superiore} al Nucleus, che non sa nulla di
+come gestirle), viene delegata con \code{passUpOrDie(GENERALEXCEPT)}: il
+Nucleus non implementa mai syscall positive, le passa sempre su.
+
+\subsubsection{SYS1 --- \code{CREATEPROCESS}}
+\begin{lstlisting}
+case CREATEPROCESS: {
+    state_t   *newState = (state_t *) savedState->reg_a1;
+    int        prio     = (int) savedState->reg_a2;
+    support_t *support  = (support_t *) savedState->reg_a3;
+
+    pcb_t *child = allocPcb();
+    if (!child) {
+        savedState->reg_a0 = (unsigned int) -1;
+        copyState(&currentProcess->p_s, savedState);
+        LDST(&currentProcess->p_s);
+    }
+
+    copyState(&child->p_s, newState);
+    child->p_supportStruct = support;
+    child->p_prio          = prio;
+
+    activeProcs_add(child);
+    insertChild(currentProcess, child);
+    processCount++;
+
+    savedState->reg_a0 = (unsigned int) child->p_pid;
+    copyState(&currentProcess->p_s, savedState);
+    insertProcQ(&readyQueue, currentProcess);
+    insertProcQ(&readyQueue, child);
+    currentProcess = NULL;
+    scheduler();
+    break;
+}
+\end{lstlisting}
+Crea un nuovo processo figlio del chiamante. Argomenti (convenzione: \code{a1},
+\code{a2}, \code{a3}): puntatore allo stato iniziale del processore che il
+nuovo processo dovrà avere, priorità, puntatore opzionale a una
+\code{support\_t}. Passi:
+\begin{enumerate}
+\item \code{allocPcb()}: se la free list dei PCB è esaurita (limite di 20
+  processi vivi raggiunto), \code{a0} del \emph{chiamante} viene impostato a
+  \code{-1} (fallimento) e si riprende immediatamente il chiamante con
+  \code{LDST} --- \emph{niente} nuovo processo, nessuna modifica a
+  \code{processCount}.
+\item Altrimenti si copia lo stato iniziale fornito nel PCB del figlio
+  (\code{copyState}), si registrano support struct e priorità.
+\item Il figlio viene aggiunto ad \code{activeProcs} e inserito nell'albero
+  come figlio di \code{currentProcess} (\code{insertChild}).
+  \code{processCount++}.
+\item \code{a0} del chiamante viene impostato al \textbf{PID del figlio}
+  appena creato (valore di ritorno della syscall lato padre).
+\item \textbf{Sia il padre sia il figlio} vengono inseriti nella ready
+  queue (in ordine: prima il padre, poi il figlio, ma \code{insertProcQ}
+  riordina comunque per priorità), e si richiama lo scheduler. Questo
+  \emph{abilita la preemption immediata}: se il figlio ha priorità
+  superiore al padre, sarà lui il primo a essere estratto ed eseguito,
+  anche prima che il padre riprenda dal punto della \code{ecall}.
+\end{enumerate}
+
+\subsubsection{SYS2 --- \code{TERMPROCESS}}
+\label{subsub:sys2-termprocess}
+\begin{lstlisting}
+case TERMPROCESS: {
+    int targetPid = (int) savedState->reg_a1;
+    updateCPUTime();
+
+    pcb_t *target = (targetPid == 0) ? currentProcess : findProcessByPid(targetPid);
+    if (!target) {
+        LDST(savedState);
+    } else {
+        int terminatingSelf = (target == currentProcess);
+        terminateProcess(target);
+        if (terminatingSelf) currentProcess = NULL;
+    }
+
+    if (currentProcess == NULL) {
+        scheduler();
+    } else {
+        copyState(&currentProcess->p_s, savedState);
+        LDST(&currentProcess->p_s);
+    }
+    break;
+}
+\end{lstlisting}
+Se \code{a1 == 0} il target è il processo chiamante stesso; altrimenti si
+cerca per PID con \code{findProcessByPid}. Se il target non esiste più
+(magari già terminato da un altro processo), si riprende semplicemente il
+chiamante senza fare nulla (\code{LDST(savedState)}: nota che qui si usa
+direttamente \code{savedState}, non \code{\&currentProcess->p\_s}, perché il
+chiamante --- che \emph{non} è il target in questo ramo --- non ha ancora
+subito modifiche al proprio stato salvato). Se il target esiste, si chiama
+\code{terminateProcess} (che termina ricorsivamente lui e tutto il suo
+sotto-albero, si veda sopra). Se il chiamante ha terminato \emph{se stesso},
+\code{currentProcess} è già stato azzerato da \code{terminateProcess}, e si
+richiama direttamente lo scheduler; altrimenti (il chiamante ha terminato
+\emph{un altro} processo, es. un fratello o un discendente) il chiamante
+stesso prosegue: si salva il suo stato e si riprende con \code{LDST}.
+
+\subsubsection{SYS3 --- \code{PASSEREN} (P)}
+\begin{lstlisting}
+case PASSEREN: {
+    int *semAddr = (int *) savedState->reg_a1;
+    updateCPUTime();
+    copyState(&currentProcess->p_s, savedState);
+    (*semAddr)--;
+    if (*semAddr < 0) {
+        blockCurrentProcess(semAddr);
+    }
+    LDST(&currentProcess->p_s);
+    break;
+}
+\end{lstlisting}
+Implementa la semantica classica del semaforo a \textbf{contatore
+negativo}: si decrementa sempre il valore; se il risultato è negativo
+significa che non c'era disponibilità, e il processo si blocca
+(\code{blockCurrentProcess}, che a sua volta chiama \code{scheduler()} e non
+ritorna qui). Se invece il valore resta $\ge 0$, il processo continua
+subito: si riprende con \code{LDST}. Da notare che lo stato viene salvato
+nel PCB (\code{copyState}) \emph{prima} di decidere se bloccarsi, cosicché
+se il blocco avviene, \code{blockCurrentProcess} trova già uno stato
+coerente salvato in \code{p\_s}.
+
+\subsubsection{SYS4 --- \code{VERHOGEN} (V)}
+\begin{lstlisting}
+case VERHOGEN: {
+    int *semAddr = (int *) savedState->reg_a1;
+    updateCPUTime();
+    copyState(&currentProcess->p_s, savedState);
+    (*semAddr)++;
+    if (*semAddr <= 0) {
+        pcb_t *unblocked = removeBlocked(semAddr);
+        if (unblocked) {
+            unblocked->p_semAdd = NULL;
+            insertProcQ(&readyQueue, unblocked);
+        }
+    }
+    LDST(&currentProcess->p_s);
+    break;
+}
+\end{lstlisting}
+Incrementa il semaforo; se il valore risultante resta $\le 0$, significa che
+c'era (almeno) un processo in coda: lo si rimuove dalla ASL
+(\code{removeBlocked}, che restituisce il primo in coda in ordine FIFO) e lo
+si reinserisce nella ready queue. Il chiamante della V \emph{non si blocca
+mai}: dopo l'eventuale sblocco altrui, riprende sempre subito con
+\code{LDST}.
+
+\subsubsection{SYS5 --- \code{DOIO}}
+\begin{lstlisting}
+case DOIO: {
+    int *commandAddr  = (int *) savedState->reg_a1;
+    int  commandValue = (int) savedState->reg_a2;
+
+    unsigned int offset = (unsigned int)commandAddr - START_DEVREG;
+    int line    = (int)(offset / 0x80) + 3;
+    int dev     = (int)((offset % 0x80) / 0x10);
+    int subword = (int)((offset % 0x10) / WORDLEN);
+
+    int semIdx = (line == 7)
+        ? ((subword == 3) ? TERM_TX_SEM(dev) : TERM_RX_SEM(dev))
+        : DEV_SEM_BASE(line, dev);
+
+    updateCPUTime();
+    copyState(&currentProcess->p_s, savedState);
+
+    *commandAddr = commandValue;
+    devSems[semIdx]--;
+    blockCurrentProcess(&devSems[semIdx]);
+    break;
+}
+\end{lstlisting}
+Avvia un'operazione di I/O e blocca \emph{sempre} il processo chiamante,
+perché ogni operazione di I/O è per natura asincrona e si conclude con un
+interrupt di completamento gestito da \code{interrupts.c}.
+\begin{enumerate}
+\item Calcolo del \textbf{semaforo giusto} a partire dall'indirizzo del
+  registro di comando passato dal chiamante (\code{commandAddr}):
+  sottraendo la base \code{START\_DEVREG} si ottiene un offset, da cui si
+  ricavano linea di interrupt (\code{line}, ogni linea occupa \code{0x80}
+  byte), numero di device sulla linea (\code{dev}, ogni device occupa
+  \code{0x10} byte) e la ``subword'' dentro il blocco di registri del
+  device (\code{subword}, ogni registro è una word da 4 byte). Per la linea
+  terminale (\code{line == 7}), che ha 4 registri per device (status/comando
+  di ricezione, poi status/comando di trasmissione), la subword \code{3}
+  identifica il registro di comando \emph{trasmissione} $\to$ semaforo TX,
+  altrimenti si usa il semaforo RX.
+\item Si aggiorna la contabilità del tempo CPU e si salva lo stato corrente.
+\item \textbf{Si scrive il comando sul registro del device}
+  (\code{*commandAddr = commandValue}): questo è l'istante in cui l'I/O
+  viene effettivamente avviato a livello hardware.
+\item Si decrementa il semaforo del device e si blocca il processo su di
+  esso (\code{blockCurrentProcess}).
+\end{enumerate}
+\textbf{Assenza di race condition}: tra la scrittura del comando e il blocco
+del processo il Nucleus gira sempre con gli interrupt disabilitati (il
+Nucleus in generale processa le eccezioni con interrupt mascherati fino al
+prossimo \code{WAIT}/\code{LDST}); anche se il device completasse
+l'operazione ``istantaneamente'', l'interrupt corrispondente resterebbe
+\emph{pending} e verrebbe servito solo dopo che lo scheduler ha eseguito
+\code{WAIT} o è ripartito con un altro processo --- non si perde mai il
+segnale di completamento.
+
+\subsubsection{SYS6 --- \code{GETTIME}}
+\begin{lstlisting}
+case GETTIME: {
+    updateCPUTime();
+    savedState->reg_a0 = (unsigned int) currentProcess->p_time;
+    LDST(savedState);
+    break;
+}
+\end{lstlisting}
+Aggiorna la contabilità (per includere anche il tempo trascorso fino a
+questo istante nella syscall stessa) e restituisce in \code{a0} il tempo
+CPU totale accumulato dal processo chiamante. Nessun blocco: si riprende
+subito con \code{LDST(savedState)} (usa direttamente lo stato originale
+letto da \code{BIOSDATAPAGE}, dato che non serve passare per il PCB in
+questo caso semplice).
+
+\subsubsection{SYS7 --- \code{CLOCKWAIT}}
+\begin{lstlisting}
+case CLOCKWAIT: {
+    updateCPUTime();
+    copyState(&currentProcess->p_s, savedState);
+    devSems[PSEUDOCLK_SEM]--;
+    softBlockCount++;
+    blockCurrentProcess(&devSems[PSEUDOCLK_SEM]);
+    break;
+}
+\end{lstlisting}
+Blocca il processo chiamante fino al prossimo tick dello pseudo-clock (ogni
+\code{PSECOND}, 100\,ms). A differenza di \code{PASSEREN} generica, qui
+\code{softBlockCount++} viene incrementato \textbf{esplicitamente} \emph{prima}
+di chiamare \code{blockCurrentProcess}: dato che il semaforo pseudo-clock è
+per definizione escluso da \code{isDeviceSemaphore} (per evitare doppio
+conteggio quando \emph{altri} punti del codice bloccano su semafori
+generici), qui il chiamante si assume esplicitamente la responsabilità di
+incrementare il contatore, così che lo scheduler possa comunque distinguere
+correttamente ``sto aspettando il prossimo tick'' da un deadlock.
+
+\subsubsection{SYS8 --- \code{GETSUPPORTPTR}}
+\begin{lstlisting}
+case GETSUPPORTPTR: {
+    savedState->reg_a0 = (unsigned int) currentProcess->p_supportStruct;
+    LDST(savedState);
+    break;
+}
+\end{lstlisting}
+Restituisce semplicemente il puntatore alla \code{support\_t} del processo
+chiamante (\code{NULL} se non ne ha una). È la syscall con cui, in Fase 3,
+il Pager e il general exception handler recuperano la propria support
+structure appena vengono attivati dal pass-up.
+
+\subsubsection{SYS9 --- \code{GETPROCESSID}}
+\begin{lstlisting}
+case GETPROCESSID: {
+    int wantParent = (int) savedState->reg_a1;
+    savedState->reg_a0 = (wantParent == 0)
+        ? (unsigned int) currentProcess->p_pid
+        : (currentProcess->p_parent ? (unsigned int) currentProcess->p_parent->p_pid : 0);
+    LDST(savedState);
+    break;
+}
+\end{lstlisting}
+Se \code{a1 == 0} restituisce il PID del chiamante stesso; se \code{a1 !=
+0} restituisce il PID del \emph{padre} del chiamante, oppure \code{0} se il
+chiamante non ha un padre (è il processo radice).
+
+\subsubsection{SYS10 --- \code{YIELD}}
+\begin{lstlisting}
+case YIELD: {
+    updateCPUTime();
+    copyState(&currentProcess->p_s, savedState);
+    yieldedProcess = currentProcess;
+    currentProcess = NULL;
+    scheduler();
+    break;
+}
+\end{lstlisting}
+Il processo chiamante cede volontariamente la CPU. \emph{Non} viene
+reinserito subito nella ready queue: viene invece registrato in
+\code{yieldedProcess}, e sarà lo scheduler (passo 0, discusso sopra) a
+decidere se rimetterlo in coda (perché esiste un processo pronto di
+priorità pari o superiore) oppure farlo ripartire immediatamente con una
+nuova time slice (se è comunque il candidato più prioritario). Questo
+meccanismo indiretto garantisce che uno \code{YIELD} \emph{ceda davvero} la
+CPU quando ha senso farlo, invece di rientrare subito in
+\code{insertProcQ} e ripescarsi da solo in coda per un caso limite.
+
+\subsection{\func{passUpOrDie} --- il meccanismo di pass-up-or-die}
+\begin{lstlisting}
+static void passUpOrDie(int exceptionType) {
+    if (!currentProcess || !currentProcess->p_supportStruct) {
+        updateCPUTime();
+        terminateProcess(currentProcess);
+        currentProcess = NULL;
+        scheduler();
+    } else {
+        support_t *sup = currentProcess->p_supportStruct;
+        copyState(&sup->sup_exceptState[exceptionType], (state_t *) BIOSDATAPAGE);
+        context_t *ctx = &sup->sup_exceptContext[exceptionType];
+        LDCXT(ctx->stackPtr, ctx->status, ctx->pc);
+    }
+}
+\end{lstlisting}
+Il cuore del disaccoppiamento tra Nucleus e Support Level. Chiamato ogni
+volta che il Nucleus incontra un'eccezione che \emph{non sa} gestire
+direttamente (page fault, program trap, o syscall con codice $\ge 1$):
+\begin{itemize}
+\item \textbf{Caso ``die''}: se non c'è un processo corrente, oppure il
+  processo corrente \emph{non ha} una support structure
+  (\code{p\_supportStruct == NULL}, tipico di un processo puramente Fase 2
+  come \code{test} in modalità pura, che non ha nessun livello superiore a
+  cui rivolgersi), il processo viene semplicemente terminato con
+  \code{terminateProcess} (che, ricordiamo, termina anche tutto il suo
+  sotto-albero), e si richiama lo scheduler.
+\item \textbf{Caso ``pass up''}: se invece il processo \emph{ha} una
+  support structure (una U-proc di Fase 3), lo stato salvato in
+  \code{BIOSDATAPAGE} viene copiato nello slot corrispondente
+  (\code{sup\_exceptState[PGFAULTEXCEPT]} o
+  \code{sup\_exceptState[GENERALEXCEPT]}, a seconda del tipo passato come
+  argomento), e si esegue un \code{LDCXT} con lo stack pointer, lo status e
+  il PC salvati nel \code{context\_t} corrispondente
+  (\code{sup\_exceptContext[...]}): è un vero salto (non-locale) a un
+  gestore di livello Support (il Pager o il general exception handler,
+  configurati in Fase 3 da \code{launchUproc}), su uno stack dedicato
+  interamente separato da quello del Nucleus.
+\end{itemize}
+Questo è esattamente ciò che permette alla Fase 3 di essere costruita
+\emph{sopra} il Nucleus senza toccarne il codice: il Nucleus si limita a
+``spedire'' l'eccezione al livello giusto, senza sapere nulla di cosa
+significhino \code{PGFAULTEXCEPT}/\code{GENERALEXCEPT} per chi le riceve.
+
+% ============================================================
+\section{\code{phase2/interrupts.c} --- gestione degli interrupt}
+% ============================================================
+
+\subsection{Costanti e utility}
+\begin{lstlisting}
+#define INT_BITMAP_BASE  0x10000040
+#define INT_BITMAP(line) (*((unsigned int *)(INT_BITMAP_BASE + ((line) - 3) * 0x4)))
+
+#define DEV_REG_BASE(line, dev) \
+    ((unsigned int *)(START_DEVREG + ((line) - 3) * 0x80 + (dev) * 0x10))
+
+#define DEV_STATUS(base)          ((base)[0])
+#define DEV_COMMAND(base)         ((base)[1])
+
+#define TERM_RECV_STATUS(base)    ((base)[0])
+#define TERM_RECV_COMMAND(base)   ((base)[1])
+#define TERM_TRANSM_STATUS(base)  ((base)[2])
+#define TERM_TRANSM_COMMAND(base) ((base)[3])
+
+static int getHighestPriorityDevice(unsigned int bitmap) {
+    for (int i = 0; i < 8; i++) {
+        if (bitmap & (1u << i)) return i;
+    }
+    return -1;
+}
+\end{lstlisting}
+\code{INT\_BITMAP(line)} legge, per una data linea di interrupt (3--7), la
+bitmap hardware a 8 bit che indica quali degli 8 device su quella linea
+hanno un interrupt pendente. \code{DEV\_REG\_BASE(line, dev)} calcola
+l'indirizzo del blocco di registri di un device specifico (ogni linea
+occupa \code{0x80} byte, ogni device \code{0x10} byte all'interno della
+linea). Le macro \code{DEV\_STATUS}/\code{DEV\_COMMAND} e le quattro
+\code{TERM\_*} sono semplici alias per interpretare quel blocco come
+registri (status, comando) di un device generico o, per i terminali, come
+due coppie indipendenti (ricezione, trasmissione).
+\func{getHighestPriorityDevice(bitmap)} scansiona i bit da 0 a 7 e ritorna
+l'indice del \emph{primo} bit acceso (cioè il device a \textbf{priorità più
+alta}, dato che per convenzione hardware il bit meno significativo ha
+priorità maggiore); \code{-1} se nessun bit è acceso (interrupt spurio).
+
+\subsection{\func{interruptHandler} --- struttura generale}
+\begin{lstlisting}
+void interruptHandler(void) {
+    state_t *savedState = (state_t *) BIOSDATAPAGE;
+    unsigned int cause   = savedState->cause;
+    unsigned int excCode = cause & CAUSE_EXCCODE_MASK;
+
+    cpu_t now;
+    STCK(now);
+    if (currentProcess != NULL) {
+        currentProcess->p_time += (now - startTOD);
+    }
+    startTOD = now;
+
+    if (excCode == 7u) { /* PLT */ ... }
+    if (excCode == 3u) { /* Interval Timer */ ... }
+    if (excCode >= 17u && excCode <= 21u) { /* device */ ... }
+
+    if (currentProcess != NULL) LDST(savedState);
+    else scheduler();
+}
+\end{lstlisting}
+Legge \code{cause} e il suo \code{excCode}, aggiorna la contabilità del
+tempo CPU (stessa logica di \code{updateCPUTime}, qui reimplementata
+inline), e poi distingue tre grandi classi in base al valore di
+\code{excCode}: \code{7} (PLT), \code{3} (Interval Timer),
+\code{17--21} (le cinque linee hardware dei device esterni, che nel
+registro \code{cause} sono mappate a partire da \code{17} pur
+corrispondendo alle linee fisiche \code{3--7}, da cui il ``\code{-14}''
+visto più avanti). Se nessuno di questi rami restituisce prima (return),
+il codice finale ripristina \code{currentProcess} con \code{LDST} se
+esiste ancora, altrimenti chiama lo scheduler.
+
+\subsection{PLT --- fine time slice (preemption)}
+\begin{lstlisting}
+if (excCode == 7u) {
+    setTIMER((cpu_t) NEVER);
+    if (currentProcess != NULL) {
+        copyState(&currentProcess->p_s, savedState);
+        currentProcess->p_s.status |= MSTATUS_MIE_MASK;
+        insertProcQ(&readyQueue, currentProcess);
+        currentProcess = NULL;
+    }
+    scheduler();
+    return;
+}
+\end{lstlisting}
+Questo è il meccanismo che realizza la \textbf{preemption}: quando la time
+slice di 5\,ms del processo corrente scade, il PLT genera questo interrupt.
+Il gestore:
+\begin{enumerate}
+\item \textbf{Disarma il PLT} caricandogli il valore massimo possibile
+  (\code{NEVER = 0x7FFFFFFF}), così non genererà ulteriori interrupt finché
+  lo scheduler non ne programma uno nuovo per il prossimo processo.
+\item Se c'era un processo in esecuzione, ne salva lo stato
+  (\code{copyState}), \textbf{si assicura che, alla prossima ripartenza,
+  abbia gli interrupt abilitati} (forzando il bit \code{MSTATUS\_MIE\_MASK}
+  nello \code{status} salvato --- precauzione difensiva, dato che lo stato
+  salvato dal firmware al momento dell'interrupt riflette lo status
+  \emph{precedente} all'interrupt stesso), e lo rimette nella ready queue
+  (\code{insertProcQ}, che lo riposiziona secondo la sua priorità: un
+  round-robin ``puro'' tra processi di pari priorità).
+\item Richiama lo scheduler, che sceglierà il prossimo processo da
+  eseguire (possibilmente lo stesso, se non c'è nessun altro pronto).
+\end{enumerate}
+
+\subsection{Interval Timer --- tick dello pseudo-clock}
+\begin{lstlisting}
+if (excCode == 3u) {
+    LDIT(PSECOND);
+
+    pcb_t *p;
+    while ((p = removeBlocked(&devSems[PSEUDOCLK_SEM])) != NULL) {
+        p->p_semAdd   = NULL;
+        p->p_s.reg_a0 = 0;
+        insertProcQ(&readyQueue, p);
+        softBlockCount--;
+    }
+
+    devSems[PSEUDOCLK_SEM] = 0;
+
+    if (currentProcess != NULL) LDST(savedState);
+    else scheduler();
+    return;
+}
+\end{lstlisting}
+Ogni 100\,ms (\code{PSECOND}) l'Interval Timer genera questo interrupt.
+\begin{enumerate}
+\item \textbf{Riarma subito il timer} per il prossimo tick
+  (\code{LDIT(PSECOND)}).
+\item \textbf{Sblocca in blocco} tutti i processi che erano in attesa sul
+  semaforo pseudo-clock (chiunque avesse chiamato \code{CLOCKWAIT}): il
+  ciclo \code{while} continua a chiamare \code{removeBlocked} finché la
+  coda non è vuota, e per ciascun processo estratto: azzera
+  \code{p\_semAdd}, imposta \code{a0 = 0} (valore di ritorno di
+  \code{CLOCKWAIT}), lo inserisce nella ready queue, e decrementa
+  \code{softBlockCount}.
+\item \textbf{Azzera esplicitamente} \code{devSems[PSEUDOCLK\_SEM]}: a
+  differenza di un semaforo normale (dove ogni V incrementa di 1), qui si
+  forza il valore a 0 perché lo pseudo-clock ha semantica ``broadcast'':
+  \emph{tutti} i processi in attesa vengono liberati contemporaneamente a
+  ogni tick, non uno alla volta come farebbe una sequenza di V singole.
+\item Come sempre, se c'era un processo in esecuzione lo si riprende
+  direttamente (\code{LDST(savedState)}, nessun cambio di processo
+  necessario); altrimenti si chiama lo scheduler (che magari ora ha nuovi
+  processi pronti, appena svegliati).
+\end{enumerate}
+
+\subsection{Interrupt di device (linee 3--7, \code{excCode} 17--21)}
+\begin{lstlisting}
+if (excCode >= 17u && excCode <= 21u) {
+    int intLineNo = (int)(excCode - 14u);
+    unsigned int bitmap = INT_BITMAP(intLineNo);
+    int devNo = getHighestPriorityDevice(bitmap);
+
+    if (devNo < 0) {
+        if (currentProcess != NULL) LDST(savedState);
+        else scheduler();
+        return;
+    }
+
+    if (intLineNo == 7) {
+        /* terminale: TX poi RX, vedi sotto */
+    } else {
+        unsigned int *devBase = DEV_REG_BASE(intLineNo, devNo);
+        unsigned int savedStatus = DEV_STATUS(devBase);
+        DEV_COMMAND(devBase) = ACK;
+
+        int semIdx = DEV_SEM_BASE(intLineNo, devNo);
+        if (devSems[semIdx] < 0) {
+            devSems[semIdx]++;
+            pcb_t *unblocked = removeBlocked(&devSems[semIdx]);
+            if (unblocked != NULL) {
+                unblocked->p_s.reg_a0 = savedStatus;
+                unblocked->p_semAdd   = NULL;
+                insertProcQ(&readyQueue, unblocked);
+                softBlockCount--;
+            }
+        }
+    }
+
+    if (currentProcess != NULL) LDST(savedState);
+    else scheduler();
+    return;
+}
+\end{lstlisting}
+\begin{enumerate}
+\item \code{intLineNo = excCode - 14}: converte il codice \code{cause}
+  (17--21) nella linea hardware effettiva (3--7: \code{IL\_DISK},
+  \code{IL\_FLASH}, \code{IL\_ETHERNET}, \code{IL\_PRINTER},
+  \code{IL\_TERMINAL}).
+\item Legge la bitmap dei device con interrupt pendente su quella linea, e
+  sceglie \code{devNo} col bit più basso acceso (priorità più alta). Se
+  nessun bit è acceso, l'interrupt è spurio: si riprende/schedula senza
+  fare nulla.
+\item \textbf{Per device diversi dal terminale} (linee 3--6: disk, flash,
+  ethernet, printer): si legge lo \textbf{status prima} di inviare l'ACK.
+  Questo ordine è \emph{cruciale}: il registro di status del device viene
+  tipicamente sovrascritto o azzerato nel momento in cui si invia il
+  comando di ACK, quindi se si invertisse l'ordine il valore di status
+  andrebbe perso e il processo risvegliato non saprebbe come è terminata la
+  sua operazione di I/O. Dopo aver salvato lo status, si scrive
+  \code{ACK} nel registro di comando (riconoscimento dell'interrupt), poi:
+  se il semaforo del device era negativo (c'era almeno un processo in
+  attesa), lo si incrementa e si sblocca il primo processo in coda
+  (\code{removeBlocked}), impostandone \code{a0} allo status letto (valore
+  di ritorno di \code{DOIO}) e decrementando \code{softBlockCount}. Se il
+  semaforo \emph{non} era negativo (nessuno in attesa --- caso anomalo dato
+  che \code{DOIO} blocca sempre, ma gestito difensivamente), non si fa
+  nulla.
+\item Al termine, come sempre, si riprende il processo corrente o si
+  schedula.
+\end{enumerate}
+
+\subsubsection{Il caso speciale del terminale (linea 7)}
+\begin{lstlisting}
+unsigned int *termBase = DEV_REG_BASE(intLineNo, devNo);
+unsigned int txStatus = TERM_TRANSM_STATUS(termBase) & 0xFFu;
+unsigned int rxStatus = TERM_RECV_STATUS(termBase) & 0xFFu;
+
+if (txStatus == OKCHARTRANS) {
+    unsigned int savedStatus = TERM_TRANSM_STATUS(termBase);
+    TERM_TRANSM_COMMAND(termBase) = ACK;
+    int semIdx = TERM_TX_SEM(devNo);
+    if (devSems[semIdx] < 0) {
+        devSems[semIdx]++;
+        pcb_t *unblocked = removeBlocked(&devSems[semIdx]);
+        if (unblocked != NULL) {
+            unblocked->p_s.reg_a0 = savedStatus;
+            unblocked->p_semAdd   = NULL;
+            list_add_tail(&unblocked->p_list, &readyQueue);
+            softBlockCount--;
+        }
+    }
+}
+
+if (rxStatus == CHARRECV) {
+    unsigned int savedStatus = TERM_RECV_STATUS(termBase);
+    TERM_RECV_COMMAND(termBase) = ACK;
+    int semIdx = TERM_RX_SEM(devNo);
+    if (devSems[semIdx] < 0) {
+        devSems[semIdx]++;
+        pcb_t *unblocked = removeBlocked(&devSems[semIdx]);
+        if (unblocked != NULL) {
+            unblocked->p_s.reg_a0 = savedStatus;
+            unblocked->p_semAdd   = NULL;
+            insertProcQ(&readyQueue, unblocked);
+            softBlockCount--;
+        }
+    }
+}
+\end{lstlisting}
+Un terminale è in realtà \textbf{due sotto-device indipendenti}:
+trasmissione (TX, scrittura di caratteri) e ricezione (RX, lettura di
+caratteri), ciascuno con il proprio status/comando e il proprio semaforo
+dedicato (\code{TERM\_TX\_SEM}/\code{TERM\_RX\_SEM}). Un singolo interrupt
+sulla linea 7 può quindi segnalare il completamento di \emph{una} delle due
+operazioni (o, in teoria, di entrambe se coincidono): il codice controlla
+\textbf{prima} lo status di trasmissione (\code{OKCHARTRANS = 5}: carattere
+trasmesso con successo) e \textbf{poi} quello di ricezione
+(\code{CHARRECV = 5}: carattere ricevuto), gestendo ciascuno in modo
+indipendente con la stessa logica (salva status, ACK, eventuale sblocco del
+processo in attesa) vista sopra per i device generici. \textbf{TX ha
+priorità su RX}: se entrambi gli status indicano un evento completato nello
+stesso interrupt, si processa prima la trasmissione. Questo ordine evita
+che un carattere ricevuto ``scavalchi'' silenziosamente un carattere appena
+trasmesso in situazioni di traffico bidirezionale rapido, riducendo il
+rischio di perdita di caratteri.
+
+(Nota implementativa minore: nel ramo TX lo sblocco usa
+\code{list\_add\_tail(\&unblocked->p\_list, \&readyQueue)} anziché
+\code{insertProcQ}: essendo la ready queue ordinata per priorità tramite
+\code{p\_prio}, e i processi risvegliati da un device tipicamente non hanno
+priorità speciali diverse da quella con cui erano stati creati, l'effetto
+pratico coincide quasi sempre con un \code{insertProcQ}; il ramo RX usa
+invece coerentemente \code{insertProcQ}.)
+
+% ============================================================
+\section{Il ciclo completo di una operazione di I/O --- riepilogo narrativo}
+% ============================================================
+
+\`E lo scenario più chiesto all'orale: sapere raccontare, passo per passo,
+cosa succede quando un processo chiede un'operazione di I/O.
+
+\begin{enumerate}
+\item Un processo esegue \code{SYSCALL(DOIO, indirizzoComando, comando, 0)}.
+  Questo genera un'eccezione \code{ecall}, che il firmware intercetta
+  salvando lo stato in \code{BIOSDATAPAGE} e saltando a
+  \code{exceptionHandler} (l'indirizzo registrato nel Pass Up Vector).
+\item \code{exceptionHandler} riconosce l'\code{ExcCode} come \code{ECALL},
+  avanza il PC di una word, e chiama \code{syscallHandler}.
+\item \code{syscallHandler} riconosce \code{sysCode == DOIO}, calcola il
+  semaforo giusto dall'indirizzo del registro di comando, \textbf{scrive il
+  comando sul device} e poi chiama \code{blockCurrentProcess}: il processo
+  viene inserito nella ASL sul semaforo del device e \code{currentProcess}
+  torna \code{NULL}.
+\item Si richiama \code{scheduler()}. Se non ci sono altri processi pronti
+  ma qualcuno è soft-blocked (come il processo appena bloccato), lo
+  scheduler esegue \code{WAIT()}: la CPU virtuale si ferma in attesa di un
+  interrupt, con tutti gli interrupt (tranne il PLT) abilitati.
+\item Il device, terminata l'operazione richiesta, genera un
+  \textbf{interrupt} sulla propria linea. Il firmware salva lo stato e
+  salta di nuovo a \code{exceptionHandler}, che lo riconosce (bit 31 di
+  \code{cause}) e delega a \code{interruptHandler}.
+\item \code{interruptHandler} legge la bitmap della linea, individua il
+  device, \textbf{legge lo status prima di fare l'ACK}, incrementa il
+  semaforo del device e sblocca il processo in attesa con
+  \code{removeBlocked}, impostandogli \code{a0} allo status letto.
+\item Il processo risvegliato torna nella ready queue. Alla sua prossima
+  esecuzione (dispatch dello scheduler), riprenderà dall'istruzione
+  \emph{successiva} alla \code{ecall} della \code{DOIO}, trovando in
+  \code{a0} lo status dell'operazione appena conclusa.
+\end{enumerate}
+Nessuna race condition è possibile perché tra l'emissione del comando (passo
+3) e il blocco effettivo del processo, il Nucleus sta ancora gestendo
+un'eccezione con gli interrupt mascherati: anche se il device completasse
+l'operazione istantaneamente, l'interrupt resterebbe pending e verrebbe
+processato solo dopo che il controllo è tornato a un punto sicuro
+(\code{WAIT} o la ripresa di un altro processo).
+
+% ============================================================
+\section{Il test driver ufficiale: \code{phase2/p2test.c}}
+% ============================================================
+
+Come \code{p1test.c} per la Fase 1, \code{p2test.c} \textbf{non è codice
+originale del progetto}: è il test driver standard del Nucleus (compilato
+solo nel target \code{phase2}; fornisce la funzione \code{test()} che
+\code{initial.c::main} lancia come primo processo). È volutamente
+``contorto'' (lo dice il commento stesso in testa al file, \emph{``This is
+pretty convoluted code, so good luck!''}) perché il suo scopo è mettere
+sotto stress \emph{ogni} syscall e meccanismo del Nucleus in un'unica
+esecuzione. Non viene analizzato riga per riga (è quasi 800 righe,
+in gran parte ripetitive), ma è utile sapere cosa dimostra ciascun
+sotto-processo, perché il professore può chiedere ``spiega cosa succede
+quando gira \code{p2test}''.
+
+\begin{center}
+\begin{longtable}{@{}llp{8.6cm}@{}}
+\toprule
+\textbf{Processo} & \textbf{Ruolo} & \textbf{Cosa dimostra} \\
+\midrule
+\code{test} (``p1'') & radice & Fa 3 V e 3 P consecutive su un semaforo di
+  test verificandone il valore atteso, poi costruisce a mano gli stati
+  iniziali di tutti gli altri processi (stack decrescenti, ciascuno nella
+  propria pagina) e li crea in sequenza con \code{CREATEPROCESS}. \\
+\code{p2} & sincronizzazione + tempo & Si blocca finché \code{test} non fa
+  \code{VERHOGEN(sem\_startp2)}; verifica il proprio PID
+  (\code{GETPROCESSID}); esegue 20 cicli di V/P sullo stesso semaforo
+  controllando che torni sempre a 0; confronta \code{GETTIME} col TOD reale
+  (\code{STCK}) per verificare che la contabilità del tempo CPU sia
+  corretta e coerente (mai più del tempo reale trascorso). \\
+\code{p3} & pseudo-clock & Cicla su \code{CLOCKWAIT} misurando che ogni
+  risveglio avvenga dopo circa un intervallo di clock, e che anche
+  durante l'attesa passiva il tempo CPU registrato (\code{GETTIME}) resti
+  coerente. \\
+\code{p4} & terminazione a cascata & Crea una \emph{seconda incarnazione di
+  se stesso} (stesso codice, PCB diverso) e attende che sia sincronizzata;
+  quando il padre \code{p4} termina (\code{TERMPROCESS} su se stesso), il
+  Nucleus deve terminare a cascata anche il figlio: verifica
+  \code{terminateProcess} sui sotto-alberi. \\
+\code{p5} (con \code{support\_t}) & pass-up-or-die \emph{con} support
+  struct & È l'unico processo creato con una \code{support\_t} valida
+  (\code{pFiveSupport}) anche in Fase 2 pura (nessuna vera memoria
+  virtuale: serve solo a esercitare il meccanismo generico). Genera
+  deliberatamente un accesso a un indirizzo invalido (program trap $\to$
+  \code{p5gen}), poi un accesso fuori \code{kuseg} da user-mode (address
+  error $\to$ ancora \code{p5gen}, che passa a gestione kernel-mode), poi
+  una syscall dal Nucleus (\code{p5sys}) e un vero page fault
+  (\code{p5mm}). Dimostra che \code{passUpOrDie} instrada correttamente le
+  diverse eccezioni verso i due context (\code{GENERALEXCEPT} /
+  \code{PGFAULTEXCEPT}) configurati nella sua \code{support\_t}. \\
+\code{p6} & pass-up-or-die \emph{senza} support struct (syscall) & Esegue
+  una syscall con codice positivo (\code{SYSCALL(1,...)}) \emph{senza}
+  avere una support struct: il Nucleus deve terminarlo immediatamente
+  (ramo ``die'' di \code{passUpOrDie}). Se \code{p6} sopravvive fino al
+  \code{print} successivo, il test segnala un errore. \\
+\code{p7} & pass-up-or-die \emph{senza} support struct (program trap) &
+  Stesso principio di \code{p6} ma con un accesso a un indirizzo non
+  valido invece di una syscall: verifica lo stesso ramo ``die'' per il tipo
+  \code{GENERALEXCEPT} generato da un vero program trap. \\
+\code{p8root} + \code{child1}/\code{child2} + 4 foglie & sotto-alberi
+  profondi & Costruisce un albero di processi a 3 livelli (radice, 2 figli,
+  4 nipoti) e lo ripete \textbf{4 volte di seguito}: verifica non solo che
+  \code{terminateProcess} termini correttamente un sotto-albero intero
+  (radice inclusa) quando la radice muore, ma anche che PCB e semafori
+  usati vengano \emph{davvero} restituiti alle rispettive free list (la
+  ripetizione fallirebbe rapidamente se ci fosse una perdita di risorse). \\
+\code{p9}/\code{p10} & terminazione di un processo diverso da sé & \code{p9}
+  crea \code{p10} e si blocca; \code{p10} termina \emph{il proprio padre}
+  esplicitamente per PID (\code{TERMPROCESS} con \code{a1 = ppid}),
+  verificando il ramo di \code{TERMPROCESS} in cui il chiamante non
+  coincide col target (Sezione~\ref{subsub:sys2-termprocess} di questo
+  documento: si veda \code{terminatingSelf}). \\
+\code{hp\_p1}/\code{hp\_p2} & \code{YIELD} & Due processi ad alta priorità
+  che cedono ripetutamente la CPU con \code{SYSCALL(YIELD,...)}: esercitano
+  il meccanismo \code{yieldedProcess} dello scheduler
+  (Sezione~\ref{sub:yield-scheduler}). \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+Ogni sotto-processo stampa messaggi di progresso sul terminale 0 tramite una
+funzione \code{print} interna (analoga a \code{termprint} di
+\code{p1test.c}, ma qui implementata sopra una vera \code{DOIO}, dato che il
+Nucleus è già disponibile), protetta da un semaforo di mutua esclusione
+(\code{sem\_term\_mut}) per evitare che più processi scrivano
+contemporaneamente e mescolino i caratteri sullo stesso terminale --- un
+piccolo promemoria pratico che anche una risorsa condivisa ``interna'' come
+il terminale di debug va protetta con un semaforo.
+
+\paragraph{\code{p2test\_OLD.c}.} Nella cartella \code{phase2/} è presente
+anche un file \code{p2test\_OLD.c}: è una versione precedente dello stesso
+test driver, \textbf{non referenziata da nessun target CMake} (si veda
+\code{CMakeLists.txt}: solo \code{phase2/p2test.c} compare nell'elenco
+sorgenti del target \code{phase2}) e quindi non più compilata né eseguita;
+resta nel repository solo come riferimento storico.
+
+\end{document}

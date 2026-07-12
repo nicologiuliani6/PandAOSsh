@@ -1,0 +1,1611 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[italian]{babel}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{codebg}{rgb}{0.96,0.96,0.96}
+\definecolor{kw}{rgb}{0.0,0.2,0.6}
+\definecolor{cmt}{rgb}{0.3,0.5,0.3}
+
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  backgroundcolor=\color{codebg},
+  keywordstyle=\color{kw}\bfseries,
+  commentstyle=\color{cmt}\itshape,
+  frame=single,
+  framesep=4pt,
+  breaklines=true,
+  showstringspaces=false,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  language=C,
+  tabsize=4
+}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\func}[1]{\textbf{\texttt{#1}}}
+
+
+\titleformat{\section}{\large\bfseries\color{kw}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\itshape}{\thesubsubsection}{0.6em}{}
+
+\setlist{itemsep=1pt,topsep=2pt}
+
+\title{\textbf{PandOSsh --- Fase 3}\\[2pt]
+\large Il Support Level: memoria virtuale, Pager, U-proc e shell\\
+\normalsize Guida dettagliata riga per riga, funzione per funzione}
+\author{Materiale di studio per l'interrogazione}
+\date{A.A. 2025/2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\bigskip
+\hrule
+\bigskip
+
+% ============================================================
+\section{Introduzione generale alla Fase 3}
+% ============================================================
+
+La \textbf{Phase 3} (Support Level, il quarto livello dello strato
+complessivo del sistema) è costruita \emph{esclusivamente} usando le 10
+syscall del Nucleus esposte dalla Fase 2 (\code{SYSCALL(...)}): non tocca
+mai direttamente le strutture dati interne del kernel (PCB, ASL, ready
+queue). Il suo compito è realizzare due concetti che il Nucleus non conosce
+affatto:
+
+\begin{enumerate}
+\item la \textbf{memoria virtuale a paginazione} per i processi utente
+  (\emph{U-proc}), con relativo gestore dei page fault (il \emph{Pager});
+\item i \textbf{processi utente} veri e propri, che girano in
+  \textbf{user-mode} con un proprio spazio di indirizzamento logico
+  (\code{kuseg}), le loro syscall dedicate (\code{TERMINATE},
+  \code{WRITETERMINAL}, \code{READTERMINAL}, \code{EXECUTE}), e --- nel caso
+  specifico di questo progetto --- una \textbf{shell interattiva} che
+  permette di lanciare altri programmi a runtime.
+\end{enumerate}
+
+Il codice è distribuito su tre moduli C più uno assembly, con
+responsabilità nettamente separate:
+\begin{center}
+\begin{tabular}{@{}llp{7.7cm}@{}}
+\toprule
+\textbf{File} & \textbf{Ruolo} \\
+\midrule
+\code{initProc.c} & L'\emph{InstantiatorProcess} (\code{test}): inizializza
+  le strutture del Support Level, avvia la shell, attende la sua fine, poi
+  provoca l'\code{HALT} finale. \\
+\code{vmSupport.c} & Lo \emph{Swap Pool}, il \emph{Pager} (gestore dei page
+  fault) con rimpiazzo FIFO, la lettura/scrittura sul backing store
+  (device flash), l'inizializzazione della Page Table di ogni U-proc. \\
+\code{sysSupport.c} & Il \emph{general exception handler}, le syscall del
+  Support Level (\code{TERMINATE}, \code{WRITETERMINAL}, \code{READTERMINAL},
+  \code{EXECUTE}), la terminazione ordinata (\code{supTerminate}). \\
+\code{testers/crtsi.S} & Il ``C runtime startup'' delle U-proc: codice
+  assembly minimale eseguito prima di \code{main} di ogni programma utente. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A questi si affianca il \code{uTLB\_RefillHandler} (fisicamente collocato in
+\code{phase2/exceptions.c}, compilato condizionalmente con
+\code{\#ifdef SUPPORT\_LEVEL}), perché resta comunque responsabilità del
+Nucleus popolare il Pass Up Vector, anche se il contenuto dell'handler serve
+strutture dati (la Page Table) definite dalla Fase 3.
+
+% ============================================================
+\section{Concetti di base: memoria virtuale a paginazione}
+% ============================================================
+
+Prima di entrare nei singoli file, è indispensabile avere chiari alcuni
+concetti generali di teoria dei sistemi operativi che l'implementazione
+concreta (Sezioni 3--5) dà per scontati.
+
+\begin{description}[style=nextline,leftmargin=0pt]
+\item[Indirizzo logico vs fisico] Una U-proc vede solo \textbf{indirizzi
+  logici} (o \emph{virtuali}), nel proprio spazio \code{kuseg} a partire da
+  \code{0x80000000}: non conosce e non può indirizzare direttamente la RAM
+  reale. Ogni accesso a memoria viene tradotto dall'hardware in un
+  \textbf{indirizzo fisico} (un frame reale di RAM) tramite la
+  \textbf{Page Table}. Questo dà a ciascuna U-proc l'illusione di avere la
+  macchina (e uno spazio di indirizzamento che parte sempre da
+  \code{0x80000000}) tutta per sé, isolandola dalle altre.
+\item[Pagina e frame] Lo spazio logico è diviso in blocchi di dimensione
+  fissa (\textbf{pagine}, qui \code{PAGESIZE = 4096} byte); la RAM fisica è
+  divisa negli stessi blocchi (\textbf{frame}). Tradurre un indirizzo
+  significa trovare \emph{in quale frame fisico} risiede la pagina logica
+  richiesta.
+\item[Page Table] Tabella (una per processo) che mappa ogni pagina logica al
+  frame fisico che la contiene, più alcuni bit di controllo: qui
+  \code{V} (\emph{valid}, la pagina è presente in RAM) e \code{D}
+  (\emph{dirty}, la pagina è scrivibile/è stata modificata). In PandOSsh
+  ogni U-proc ha una Page Table \textbf{privata} di 32 entry
+  (\code{sup\_privatePgTbl}, dentro la sua \code{support\_t}): 31 pagine
+  per \code{.text}/\code{.data}, 1 per lo stack.
+\item[TLB (Translation Lookaside Buffer)] Consultare la Page Table in
+  memoria \emph{a ogni singolo accesso} sarebbe troppo lento: il TLB è una
+  piccola \textbf{cache hardware} (qui 16 entry, si veda
+  \code{"tlb-size": 16} nei file di configurazione) delle traduzioni usate
+  di recente. Se la traduzione richiesta non è nel TLB si parla di
+  \textbf{TLB miss}: può essere risolto rapidamente (\emph{TLB-Refill}, se
+  la pagina è comunque presente in Page Table) o richiedere l'intervento
+  del Pager (se la pagina non è affatto in memoria).
+\item[ASID (Address Space Identifier)] Un piccolo identificatore
+  (\code{entry\_hi}, $\in[1,8]$ in questo progetto) che ``etichetta'' ogni
+  traduzione nel TLB con il processo a cui appartiene. Senza ASID, il TLB
+  andrebbe \textbf{completamente invalidato} a ogni cambio di processo
+  (altrimenti un processo potrebbe leggere/scrivere per errore le pagine
+  fisiche di un altro tramite una traduzione stantia); con l'ASID, più
+  traduzioni di processi diversi possono coesistere nel TLB, e l'hardware
+  usa solo quelle che corrispondono al processo in esecuzione.
+\item[Page fault] L'eccezione generata quando si accede a una pagina
+  \emph{non presente} in Page Table (\code{V=0}). \`E il segnale che fa
+  scattare il \textbf{Pager} (Sezione~\ref{sub:pager-fase3}), il gestore
+  che dovrà trovarla e caricarla.
+\item[Paginazione a domanda (\emph{demand paging})] Strategia per cui
+  nessuna pagina viene caricata in RAM finché non è effettivamente
+  richiesta: ogni U-proc parte con Page Table interamente invalida
+  (Sezione~\ref{sub:init-swap-pgtbl}) e le sue pagine vengono popolate una a
+  una, al primo page fault su ciascuna. Evita di caricare in memoria
+  codice/dati mai usati.
+\item[Backing store e swapping] Poiché la RAM fisica non basta a tenere in
+  memoria \emph{tutte} le pagine di \emph{tutte} le U-proc
+  contemporaneamente, serve un supporto di memorizzazione più lento ma più
+  capiente (qui, un device \textbf{flash} per U-proc) su cui tenere le
+  pagine non attualmente in RAM: è il \textbf{backing store}. Quando la RAM
+  disponibile per la memoria virtuale (lo \textbf{Swap Pool},
+  Sezione~\ref{sec:vmsupport-fase3}) è
+  piena, occorre \textbf{sfrattare} (\emph{swap out}) una pagina già
+  presente per farne spazio a quella richiesta, riscrivendola sul suo
+  backing store se necessario.
+\end{description}
+
+Questi concetti sono \textbf{teoria generale dei sistemi operativi}, validi
+ben oltre PandOSsh; le sezioni successive mostrano \emph{come} questo
+progetto specifico li implementa (Swap Pool a 16 frame, algoritmo FIFO,
+device flash come backing store, Page Table a 32 entry per processo).
+
+% ============================================================
+\section{\code{phase3/headers/support.h} --- costanti e variabili globali}
+% ============================================================
+
+\subsection{Costanti di memoria e Swap Pool}
+\begin{lstlisting}
+#define SWAP_POOL_START (RAMSTART + (OSFRAMES * PAGESIZE))
+#define SWAP_POOL_SIZE  POOLSIZE
+
+#define KUSEG_VPN_START   0x80000
+#define KUSEG_STACK_VPN   0xBFFFF
+#define UPROC_STACKPAGE   31
+#define UPROC_TEXTPAGES   31
+
+#define SWAP_FRAME_FREE  (-1)
+
+#define UPROC_STATUS  (MSTATUS_MPIE_MASK | MSTATUS_MPP_U)
+#define SUPPORT_STATUS (MSTATUS_MIE_MASK | MSTATUS_MPIE_MASK | MSTATUS_MPP_M)
+\end{lstlisting}
+\begin{itemize}
+\item \code{SWAP\_POOL\_START}: la RAM fisica inizia a \code{RAMSTART}
+  (\code{0x20000000}); i primi \code{OSFRAMES} (32) frame sono riservati al
+  Nucleus (codice, dati, stack degli handler). Lo \textbf{Swap Pool} inizia
+  subito dopo, a \code{0x20000000 + 32 x 4096 = 0x20020000}.
+\item \code{SWAP\_POOL\_SIZE = POOLSIZE = UPROCMAX x 2 = 16}: il numero
+  di frame fisici disponibili per lo Swap Pool è il doppio del numero
+  massimo di U-proc (\code{UPROCMAX = 8}), una scelta standard di Pandos
+  che garantisce che ogni U-proc possa avere in memoria almeno due pagine
+  contemporaneamente senza causare sfratti immediati reciproci.
+\item \code{KUSEG\_VPN\_START = 0x80000}: il Virtual Page Number della
+  prima pagina logica di una U-proc (corrisponde all'indirizzo virtuale
+  \code{0x80000000 = KUSEG}, spostato a destra di \code{VPNSHIFT=12} bit).
+\item \code{KUSEG\_STACK\_VPN = 0xBFFFF}: il VPN della pagina di stack
+  (indirizzo virtuale \code{0xBFFFF000}, appena sotto
+  \code{USERSTACKTOP = 0xC0000000}).
+\item \code{UPROC\_STACKPAGE = 31}: nella Page Table privata di 32 entry
+  (indici 0--31), la pagina di stack occupa sempre l'\textbf{ultimo}
+  indice; \code{UPROC\_TEXTPAGES = 31}: le prime 31 entry (indici 0--30)
+  sono riservate a \code{.text}/\code{.data}.
+\item \code{SWAP\_FRAME\_FREE = -1}: valore sentinella che, nel campo
+  \code{sw\_asid} di una entry \code{swap\_t}, indica che quel frame dello
+  Swap Pool è attualmente libero (nessuna pagina di nessuna U-proc vi
+  risiede).
+\item \code{UPROC\_STATUS}: lo stato iniziale del processore per una
+  U-proc: \code{MSTATUS\_MPIE\_MASK} (interrupt precedenti abilitati, che
+  diventeranno gli interrupt correnti al primo \code{LDST}) e
+  \code{MSTATUS\_MPP\_U} (Machine Previous Privilege = user, cioè la U-proc
+  girerà in \textbf{user-mode}).
+\item \code{SUPPORT\_STATUS}: lo stato usato per i \emph{context} degli
+  handler del Support Level (Pager, general exception handler): kernel-mode
+  (\code{MPP\_M}) con interrupt e PLT abilitati --- questi handler, pur
+  facendo parte ``concettualmente'' del livello utente, girano a un
+  privilegio più alto per poter eseguire le \code{SYSCALL} del Nucleus.
+\end{itemize}
+
+\subsection{Numeri di syscall e mutex sui device}
+\begin{lstlisting}
+#define SUP_TERMINATE      2
+#define SUP_WRITEPRINTER   3
+#define SUP_WRITETERMINAL  4
+#define SUP_READTERMINAL   5
+#define SUP_EXECUTE        6
+
+#define MAXSTRLEN 128
+
+#define DEVCNT            (DEVINTNUM * DEVPERINT)
+#define DEV_MUTEX_TOTAL   (DEVCNT + DEVPERINT)
+
+#define FLASH_MUTEX(dev)    (((IL_FLASH - IL_DISK) * DEVPERINT) + (dev))
+#define PRINTER_MUTEX(dev)  (((IL_PRINTER - IL_DISK) * DEVPERINT) + (dev))
+#define TERMW_MUTEX(dev)    (((IL_TERMINAL - IL_DISK) * DEVPERINT) + (dev))
+#define TERMR_MUTEX(dev)    (DEVCNT + (dev))
+\end{lstlisting}
+Le syscall del Support Level hanno codice \textbf{positivo} (in contrasto
+con quelle del Nucleus, negative): \code{2}=\code{TERMINATE},
+\code{4}=\code{WRITETERMINAL}, \code{5}=\code{READTERMINAL},
+\code{6}=\code{EXECUTE} (\code{3}=\code{WRITEPRINTER} è definita ma non
+utilizzata dai programmi di test forniti). L'array \code{devMutex} fornisce
+un semaforo binario \emph{per ogni sotto-device} (48 in totale: 40 device
+``principali'' su 5 linee $\times$ 8, più 8 canali di ricezione terminale
+separati), per serializzare l'accesso quando più U-proc contendono lo
+stesso device fisico (tipicamente il flash durante il paging, o il
+terminale 0 condiviso da shell e programmi).
+
+\subsection{Variabili globali del Support Level}
+\begin{lstlisting}
+extern int swapPoolSem;
+extern swap_t swapPool[SWAP_POOL_SIZE];
+extern int masterSemaphore;
+extern int shellSemaphore;
+extern int devMutex[DEV_MUTEX_TOTAL];
+extern support_t supportPool[UPROCMAX];
+\end{lstlisting}
+\begin{itemize}
+\item \code{swapPoolSem}: semaforo binario (mutex) che protegge l'intera
+  Swap Pool table: garantisce che un solo page fault alla volta possa
+  manipolare i frame fisici e il backing store.
+\item \code{swapPool[16]}: la tabella che descrive il contenuto di ciascun
+  frame fisico dello Swap Pool.
+\item \code{masterSemaphore}: su cui si blocca l'\code{InstantiatorProcess}
+  in attesa che la shell termini.
+\item \code{shellSemaphore}: su cui si blocca la shell in attesa che la
+  U-proc appena lanciata (via \code{EXECUTE}) termini.
+\item \code{devMutex[48]}: mutex per sotto-device.
+\item \code{supportPool[8]}: pool statico di support structure, una per
+  ciascuna delle 8 possibili U-proc (indicizzato per \code{ASID-1}).
+\end{itemize}
+
+% ============================================================
+\section{\code{phase3/initProc.c} --- InstantiatorProcess}
+% ============================================================
+
+\subsection{\func{getSupport} --- accesso al pool}
+\begin{lstlisting}
+support_t *getSupport(int asid) {
+    return &supportPool[asid - 1];
+}
+\end{lstlisting}
+Funzione banale ma centrale: dato un ASID $\in [1,8]$, restituisce
+l'indirizzo della sua support structure nel pool statico. Il legame
+\emph{uno-a-uno e statico} tra ASID e slot dell'array elimina qualunque
+necessità di allocazione dinamica o di una tabella di lookup più complessa.
+
+\subsection{\func{launchUproc} --- creazione e avvio di una U-proc}
+\begin{lstlisting}
+void launchUproc(int asid) {
+    support_t *sup = getSupport(asid);
+
+    sup->sup_asid = asid;
+    initUprocPageTable(sup);
+
+    sup->sup_exceptContext[PGFAULTEXCEPT].pc       = (memaddr) pager;
+    sup->sup_exceptContext[PGFAULTEXCEPT].status   = SUPPORT_STATUS;
+    sup->sup_exceptContext[PGFAULTEXCEPT].stackPtr =
+        (memaddr) &sup->sup_stackTLB[499];
+
+    sup->sup_exceptContext[GENERALEXCEPT].pc       = (memaddr) generalExceptionHandler;
+    sup->sup_exceptContext[GENERALEXCEPT].status   = SUPPORT_STATUS;
+    sup->sup_exceptContext[GENERALEXCEPT].stackPtr =
+        (memaddr) &sup->sup_stackGen[499];
+
+    state_t s;
+    for (unsigned int i = 0; i < (STATE_T_SIZE_IN_BYTES / WORDLEN); i++)
+        ((unsigned int *)&s)[i] = 0;
+
+    s.pc_epc   = UPROCSTARTADDR;
+    s.reg_sp   = USERSTACKTOP;
+    s.status   = UPROC_STATUS;
+    s.mie      = MIE_ALL;
+    s.entry_hi = asid << ASIDSHIFT;
+
+    SYSCALL(CREATEPROCESS, (int)&s, PROCESS_PRIO_LOW, (int)sup);
+}
+\end{lstlisting}
+Questa funzione fa \emph{tutto il necessario} per portare in vita una nuova
+U-proc, sia essa la shell (ASID 1, lanciata dall'InstantiatorProcess) o un
+programma qualsiasi lanciato dalla shell tramite \code{EXECUTE} (ASID
+2--8). Passi:
+
+\begin{enumerate}
+\item Recupera la support structure dedicata a quell'ASID e vi registra
+  l'ASID stesso.
+\item \code{initUprocPageTable(sup)}: inizializza le 32 entry della Page
+  Table privata (vedi \code{vmSupport.c} più sotto) tutte come \emph{non
+  presenti}: il primo accesso a qualunque pagina genererà un page fault, che
+  il Pager gestirà caricandola dal backing store.
+\item \textbf{Configura i due \code{context\_t}} usati da
+  \code{passUpOrDie} nel Nucleus per il pass-up delle eccezioni: uno per i
+  page fault (\code{PGFAULTEXCEPT}, indice 0), che punta a \code{pager}
+  (in \code{vmSupport.c}), e uno per tutte le altre eccezioni
+  (\code{GENERALEXCEPT}, indice 1), che punta a
+  \code{generalExceptionHandler} (in \code{sysSupport.c}). Ciascuno dei due
+  usa \textbf{uno stack separato} interno alla support structure
+  (\code{sup\_stackTLB}, \code{sup\_stackGen}, 500 word ciascuno,
+  puntatore inizializzato all'ultima word valida \code{[499]}, dato che lo
+  stack cresce verso il basso). \textbf{Stack distinti sono fondamentali}:
+  se un page fault avviene mentre si sta ancora gestendo una syscall (e
+  quindi si sta usando lo stack \code{sup\_stackGen}), usare lo stesso stack
+  per il Pager ne corromperebbe il contenuto.
+\item \textbf{Costruisce lo stato iniziale} \code{s} della U-proc, azzerando
+  prima tutta la struttura (ciclo manuale word per word, analogo a
+  \code{copyState} ma da zero anziché da una sorgente) e poi impostando:
+  \begin{itemize}
+  \item \code{pc\_epc = UPROCSTARTADDR} (\code{0x800000B0}): il punto di
+    ingresso \emph{non} è \code{main} della U-proc, ma il simbolo
+    \code{\_\_start} definito da \code{crtsi.S} (vedi più avanti), collocato
+    dal linker esattamente a questo indirizzo (subito dopo l'header
+    \code{.aout});
+  \item \code{reg\_sp = USERSTACKTOP} (\code{0xC0000000}): cima dello stack
+    utente, che coincide con l'indirizzo appena sopra la pagina di stack
+    mappata all'indice 31 della Page Table;
+  \item \code{status = UPROC\_STATUS}: user-mode, interrupt abilitati;
+  \item \code{mie = MIE\_ALL}: tutte le sorgenti di interrupt abilitate a
+    livello di maschera;
+  \item \code{entry\_hi = asid << ASIDSHIFT}: registra l'ASID univoco nel
+    campo alto del registro \code{EntryHI}, così che ogni traduzione TLB
+    generata da questa U-proc sia automaticamente taggata con il suo ASID
+    (permettendo al TLB di distinguere le pagine di U-proc diverse senza
+    doverlo invalidare interamente a ogni cambio di processo).
+  \end{itemize}
+\item \textbf{Materializza il processo tramite il Nucleus}:
+  \code{SYSCALL(CREATEPROCESS, ...)} (SYS1, la \emph{unica} syscall del
+  Nucleus usata per creare processi, sia kernel sia utente) con lo stato
+  appena costruito, priorità bassa, e il puntatore alla support structure
+  (che rende il PCB creato una vera U-proc agli occhi del Nucleus: da questo
+  momento, ogni eccezione che il Nucleus non sa gestire per questo processo
+  verrà passata su tramite \code{passUpOrDie} ai due context configurati
+  sopra).
+\end{enumerate}
+
+\subsection{\func{test} --- l'InstantiatorProcess}
+\begin{lstlisting}
+void test(void) {
+    initSwapStructs();
+
+    masterSemaphore = 0;
+    shellSemaphore  = 0;
+    for (int i = 0; i < DEV_MUTEX_TOTAL; i++)
+        devMutex[i] = 1;
+
+    launchUproc(1);
+
+    SYSCALL(PASSEREN, (int)&masterSemaphore, 0, 0);
+
+    SYSCALL(TERMPROCESS, 0, 0, 0);
+}
+\end{lstlisting}
+\code{test} è la funzione con cui il Nucleus fa partire il \emph{primo}
+processo del sistema (il suo indirizzo è impostato come \code{pc\_epc} del
+PCB creato in \code{initial.c::main}). Nella build \code{phase3} questa
+funzione (definita qui, non nel \code{p2test.c} usato dalla Fase 2 pura) è
+l'\textbf{InstantiatorProcess}, e gira interamente in \textbf{kernel-mode}
+(non ha una support struct propria: è un processo puro Fase 2). Sequenza:
+
+\begin{enumerate}
+\item \code{initSwapStructs()}: inizializza lo Swap Pool e il suo semaforo
+  di mutua esclusione (dettagli in \code{vmSupport.c}).
+\item Inizializza i semafori di sincronizzazione del Support Level a 0
+  (\code{masterSemaphore}, \code{shellSemaphore}) e tutti i 48 mutex dei
+  device a 1 (semafori binari liberi).
+\item \textbf{Avvia \emph{una sola} U-proc: la shell}, con \code{ASID=1}
+  (\code{launchUproc(1)}). \`E questa la scelta architetturale distintiva
+  di PandOSsh rispetto allo schema ``classico'' di Pandos, che normalmente
+  lancerebbe direttamente tutte le U-proc di test in sequenza: qui, invece,
+  l'unico processo lanciato dal kernel è una shell interattiva, e sono le
+  \emph{syscall \code{EXECUTE}} della shell stessa (invocate a runtime in
+  base a cosa l'utente digita) a creare, una alla volta, le altre U-proc.
+\item \textbf{Si blocca su \code{masterSemaphore}} con una \code{PASSEREN}
+  (P, syscall del Nucleus): l'InstantiatorProcess resta bloccato finché la
+  shell (ASID 1) non esegue una V su questo stesso semaforo --- cosa che
+  accade in \code{supTerminate} quando la shell termina (comando
+  \code{exit}).
+\item \textbf{Sbloccato}, esegue \code{TERMPROCESS} su se stesso
+  (\code{a1=0}): essendo l'InstantiatorProcess l'\emph{ultimo} processo
+  rimasto vivo a questo punto (tutte le U-proc sono già terminate, essendo
+  la shell l'unica lanciata direttamente e le sue figlie terminate prima di
+  lei), questa terminazione porta \code{processCount} a 0, e lo scheduler
+  (al successivo giro) esegue \code{HALT()}, fermando la macchina virtuale.
+\end{enumerate}
+
+% ============================================================
+\section{\code{phase3/vmSupport.c} --- memoria virtuale e Pager}
+\label{sec:vmsupport-fase3}
+% ============================================================
+
+\subsection{Stato del modulo}
+\begin{lstlisting}
+int    swapPoolSem;
+swap_t swapPool[SWAP_POOL_SIZE];
+static int fifoNext = 0;
+\end{lstlisting}
+\code{fifoNext} è l'indice (privato del modulo) usato dall'algoritmo di
+rimpiazzo pagine: parte da 0 e avanza ciclicamente su tutti i 16 frame dello
+Swap Pool, realizzando un semplice \textbf{round-robin} (qui usato come
+approssimazione di FIFO: il frame scelto è sempre il successivo nell'ordine
+circolare, indipendentemente da quando è stato effettivamente occupato ---
+è comunque l'algoritmo che la specifica di Pandos ammette esplicitamente
+per la sua semplicità e prevedibilità).
+
+\subsection{Funzioni di utilità (\code{static})}
+
+\begin{lstlisting}
+static inline void interruptsOff(void) {
+    setSTATUS(getSTATUS() & ~MSTATUS_MIE_MASK);
+}
+static inline void interruptsOn(void) {
+    setSTATUS(getSTATUS() | MSTATUS_MIE_MASK);
+}
+\end{lstlisting}
+Due wrapper minimi per disabilitare/riabilitare il bit \code{MIE} dello
+\code{status} corrente: usati per rendere \emph{atomiche} le operazioni
+combinate di aggiornamento Page Table + TLB (vedi sotto).
+
+\begin{lstlisting}
+static int vpnToIndex(unsigned int entryHI) {
+    unsigned int vpn = (entryHI >> VPNSHIFT) & 0xFFFFF;
+    if (vpn == KUSEG_STACK_VPN) return UPROC_STACKPAGE;
+    if (vpn >= KUSEG_VPN_START && vpn < KUSEG_VPN_START + UPROC_TEXTPAGES)
+        return (int)(vpn - KUSEG_VPN_START);
+    return -1;
+}
+\end{lstlisting}
+\func{vpnToIndex}: dato il valore del registro \code{EntryHI} salvato al
+momento del page fault, estrae il VPN (bit alti, shiftati di
+\code{VPNSHIFT=12}) e lo traduce nell'indice \code{[0..31]} della Page
+Table privata: caso speciale per la pagina di stack (VPN
+\code{0xBFFFF} $\to$ indice 31), altrimenti pagine \code{.text}/\code{.data}
+(VPN in \code{[0x80000, 0x8001E]} $\to$ indici 0--30). Se il VPN richiesto
+non rientra in nessuno dei due intervalli, l'indirizzo è \textbf{fuori dallo
+spazio logico} della U-proc: si ritorna \code{-1}, che il chiamante
+(\code{pager}) interpreta come errore fatale (program trap $\to$
+terminazione).
+
+\begin{lstlisting}
+static inline memaddr frameAddr(int i) {
+    return (memaddr)(SWAP_POOL_START + i * PAGESIZE);
+}
+\end{lstlisting}
+Calcola l'indirizzo fisico del frame \code{i}-esimo dello Swap Pool (banale
+aritmetica: base più \code{i} pagine).
+
+\begin{lstlisting}
+static void markPageNotValid(pteEntry_t *pte) {
+    interruptsOff();
+    pte->pte_entryLO &= ~VALIDON;
+    TLBCLR();
+    interruptsOn();
+}
+\end{lstlisting}
+\func{markPageNotValid}: invalida un'entry di Page Table (azzera il bit
+\code{V}, \code{VALIDON}) e cancella tutto il TLB (\code{TLBCLR}) in modo
+\textbf{atomico} (interrupt disabilitati durante l'operazione). Usata
+quando si sfratta una pagina vittima dallo Swap Pool: da questo momento
+qualunque accesso a quella pagina, da parte della sua U-proc, genererà un
+nuovo page fault.
+
+\begin{lstlisting}
+static void markPagePresent(pteEntry_t *pte, memaddr phys) {
+    interruptsOff();
+    pte->pte_entryLO = phys | DIRTYON | VALIDON;
+    TLBCLR();
+    setENTRYHI(pte->pte_entryHI);
+    setENTRYLO(pte->pte_entryLO);
+    TLBWR();
+    interruptsOn();
+}
+\end{lstlisting}
+\func{markPagePresent}: rende presente un'entry di Page Table, impostando
+il frame fisico (\code{phys}) e i bit \code{D} (dirty, scrivibile) e
+\code{V} (valida). \textbf{Scelta implementativa degna di nota}: oltre a
+cancellare il TLB con \code{TLBCLR} (che elimina eventuali entry stantie
+relative al vecchio contenuto del frame), la nuova traduzione viene scritta
+\textbf{direttamente} nel TLB (\code{setENTRYHI}/\code{setENTRYLO}/\code{
+TLBWR}), invece di limitarsi a invalidare e aspettare che sia un futuro
+evento di TLB-Refill a ripopolarla. La specifica di Pandos ammette entrambe
+le strategie (cancellare tutto il TLB, oppure individuare/riscrivere la
+singola entry); questa implementazione adotta una variante della seconda,
+restando quindi pienamente conforme. La motivazione pratica di questa
+scelta (rispetto alla più semplice ``solo \code{TLBCLR}'') è discussa più
+sotto, dopo aver introdotto il Pager: era stato osservato un
+\emph{page-fault loop} in cui l'evento di TLB-Refill non veniva sempre
+rigenerato correttamente subito dopo un fault gestito dal Pager, lasciando
+la U-proc bloccata a ripetere indefinitamente lo stesso fault.
+
+\subsection{\func{initSwapStructs} e \func{initUprocPageTable}}
+\label{sub:init-swap-pgtbl}
+\begin{lstlisting}
+void initSwapStructs(void) {
+    swapPoolSem = 1;
+    fifoNext    = 0;
+    for (int i = 0; i < SWAP_POOL_SIZE; i++)
+        swapPool[i].sw_asid = SWAP_FRAME_FREE;
+}
+\end{lstlisting}
+Inizializza il semaforo dello Swap Pool a 1 (mutex libero), azzera l'indice
+FIFO, e marca tutti i 16 frame come liberi. Chiamata una sola volta
+dall'InstantiatorProcess (\code{test}).
+
+\begin{lstlisting}
+void initUprocPageTable(support_t *sup) {
+    int asid = sup->sup_asid;
+    for (int i = 0; i < UPROC_TEXTPAGES; i++) {
+        sup->sup_privatePgTbl[i].pte_entryHI =
+            ((KUSEG_VPN_START + i) << VPNSHIFT) | (asid << ASIDSHIFT);
+        sup->sup_privatePgTbl[i].pte_entryLO = DIRTYON;
+    }
+    sup->sup_privatePgTbl[UPROC_STACKPAGE].pte_entryHI =
+        (KUSEG_STACK_VPN << VPNSHIFT) | (asid << ASIDSHIFT);
+    sup->sup_privatePgTbl[UPROC_STACKPAGE].pte_entryLO = DIRTYON;
+}
+\end{lstlisting}
+Per ciascuna delle 32 entry della Page Table privata, imposta
+\code{pte\_entryHI} con il VPN corretto (progressivo da
+\code{KUSEG\_VPN\_START} per le prime 31, fisso a \code{KUSEG\_STACK\_VPN}
+per l'ultima) taggato con l'ASID della U-proc, e \code{pte\_entryLO} al solo
+bit \code{DIRTYON} (scrivibile) \textbf{senza} \code{VALIDON}: ogni pagina
+parte quindi \textbf{non presente} in memoria. Il primo accesso a
+\emph{qualunque} pagina della U-proc genererà perciò un page fault gestito
+dal Pager, che la caricherà a domanda dal backing store (paginazione
+\emph{lazy}, tipica dei sistemi a domanda di pagina).
+
+\subsection{\func{flashOperation} --- I/O sul backing store}
+\begin{lstlisting}
+int flashOperation(int asid, int blockNo, memaddr frameAddr_, int op) {
+    int        devNo = asid - 1;
+    dtpreg_t  *flash = (dtpreg_t *) DEV_REG_ADDR(IL_FLASH, devNo);
+    int        mutex = FLASH_MUTEX(devNo);
+    unsigned int status;
+
+    SYSCALL(PASSEREN, (int)&devMutex[mutex], 0, 0);
+
+    flash->data0 = frameAddr_;
+    unsigned int command = ((unsigned int)blockNo << 8) | op;
+    status = SYSCALL(DOIO, (int)&flash->command, (int)command, 0);
+
+    SYSCALL(VERHOGEN, (int)&devMutex[mutex], 0, 0);
+    return (int)status;
+}
+\end{lstlisting}
+Il \textbf{backing store} di ciascuna U-proc è un device flash dedicato: la
+U-proc con \code{ASID=i} usa il device flash numero \code{i-1}
+(\code{devNo = asid - 1}), secondo la mappatura fissata anche nel file di
+configurazione della macchina (\code{phase3\_config\_machine.json}).
+\begin{enumerate}
+\item Acquisisce il mutex dedicato a quel device flash (\code{PASSEREN}),
+  per evitare che due page fault concorrenti (di U-proc diverse, o anche
+  della stessa) tentino di usare lo stesso device contemporaneamente.
+\item Imposta \code{flash->data0} all'indirizzo \code{frameAddr\_}: è il
+  meccanismo \textbf{DMA} (\emph{Direct Memory Access}, trasferimento dati
+  che il device esegue direttamente da/verso la RAM, senza passare
+  attraverso il processore) con cui il device sa \emph{da/verso dove}
+  trasferire i dati (il frame fisico coinvolto).
+\item Compone il comando: il numero di blocco (\code{blockNo}, che
+  corrisponde alla pagina logica, 0--31) va nei byte alti, l'opcode
+  (\code{FLASHREAD} o \code{FLASHWRITE}) nel byte basso, ed esegue
+  \code{DOIO} (la syscall del Nucleus) che blocca il chiamante finché
+  l'operazione non è completata dall'interrupt.
+\item Rilascia il mutex e restituisce lo status ricevuto.
+\end{enumerate}
+La mutua esclusione per-device è \textbf{deliberatamente separata} da
+\code{swapPoolSem}: quest'ultimo protegge la \emph{struttura dati} condivisa
+(la tabella Swap Pool), mentre \code{devMutex} protegge l'\emph{hardware}
+fisico condiviso; tenerli distinti evita di serializzare inutilmente
+operazioni su flash \emph{diversi} solo perché entrambe capitate durante un
+page fault (in pratica, dato che c'è comunque un solo \code{swapPoolSem}
+globale, un solo page fault alla volta è comunque in corso; la separazione
+resta comunque corretta e più chiara concettualmente).
+
+\subsection{\func{pager} --- il Pager, cuore della memoria virtuale}
+\label{sub:pager-fase3}
+\begin{lstlisting}
+void pager(void) {
+    support_t *sup = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
+    state_t   *exState = &sup->sup_exceptState[PGFAULTEXCEPT];
+
+    unsigned int excCode = exState->cause & CAUSE_EXCCODE_MASK;
+
+    if (excCode == EXC_MOD) {
+        supTerminate(sup->sup_asid);
+        return;
+    }
+
+    SYSCALL(PASSEREN, (int)&swapPoolSem, 0, 0);
+
+    int p = vpnToIndex(exState->entry_hi);
+    if (p < 0) {
+        SYSCALL(VERHOGEN, (int)&swapPoolSem, 0, 0);
+        supTerminate(sup->sup_asid);
+        return;
+    }
+
+    int i = fifoNext;
+    fifoNext = (fifoNext + 1) % SWAP_POOL_SIZE;
+    memaddr fa = frameAddr(i);
+
+    if (swapPool[i].sw_asid != SWAP_FRAME_FREE) {
+        int        victimAsid = swapPool[i].sw_asid;
+        int        victimPage = swapPool[i].sw_pageNo;
+        pteEntry_t *victimPte  = swapPool[i].sw_pte;
+
+        markPageNotValid(victimPte);
+
+        int st = flashOperation(victimAsid, victimPage, fa, FLASHWRITE);
+        if (st != READY) {
+            SYSCALL(VERHOGEN, (int)&swapPoolSem, 0, 0);
+            supTerminate(sup->sup_asid);
+            return;
+        }
+    }
+
+    int st = flashOperation(sup->sup_asid, p, fa, FLASHREAD);
+    if (st != READY) {
+        SYSCALL(VERHOGEN, (int)&swapPoolSem, 0, 0);
+        supTerminate(sup->sup_asid);
+        return;
+    }
+
+    swapPool[i].sw_asid   = sup->sup_asid;
+    swapPool[i].sw_pageNo = p;
+    swapPool[i].sw_pte    = &sup->sup_privatePgTbl[p];
+
+    markPagePresent(&sup->sup_privatePgTbl[p], fa);
+
+    SYSCALL(VERHOGEN, (int)&swapPoolSem, 0, 0);
+    LDST(exState);
+}
+\end{lstlisting}
+
+Il Pager è il gestore di eccezione a cui il Nucleus salta (tramite
+\code{passUpOrDie(PGFAULTEXCEPT)} $\to$ \code{LDCXT}) ogni volta che una
+U-proc genera un page fault vero (pagina non presente in Page Table). Gira
+in kernel-mode sullo stack \code{sup\_stackTLB}. Analisi passo-passo:
+
+\begin{enumerate}
+\item \textbf{Recupero del contesto}: \code{GETSUPPORTPTR} (SYS8 del
+  Nucleus) restituisce la support structure del processo che ha causato
+  l'eccezione (il Nucleus, tramite \code{passUpOrDie}, aveva già copiato lo
+  stato al momento del fault in \code{sup->sup\_exceptState[PGFAULTEXCEPT]}
+  \emph{prima} di saltare qui: quello è \code{exState}).
+\item \textbf{Caso \code{EXC\_MOD}} (TLB-Modification: tentativo di scrivere
+  su una pagina segnata come read-only): in PandOSsh tutte le pagine utente
+  sono marcate scrivibili (\code{DIRTYON}), quindi questa condizione non
+  dovrebbe mai verificarsi in condizioni normali; se capitasse (bug applicativo
+  o istruzione malformata) viene trattata come errore fatale $\to$
+  \code{supTerminate}.
+\item \textbf{Acquisizione del mutex} \code{swapPoolSem}: da qui in poi, un
+  solo page fault alla volta può manipolare la Swap Pool table.
+\item \textbf{Traduzione VPN$\to$indice} con \code{vpnToIndex}: se
+  l'indirizzo è fuori dallo spazio logico valido, si rilascia il mutex e si
+  termina la U-proc (program trap).
+\item \textbf{Scelta del frame vittima (algoritmo FIFO)}: si prende
+  l'indice corrente \code{fifoNext} e lo si fa avanzare ciclicamente,
+  indipendentemente dal fatto che il frame scelto sia libero o occupato.
+\item \textbf{Sfratto (se il frame era occupato)}: se \code{swapPool[i]}
+  contiene già una pagina di qualche U-proc (\code{sw\_asid !=
+  SWAP\_FRAME\_FREE}), quella pagina va \emph{salvata} prima di essere
+  sovrascritta:
+  \begin{itemize}
+  \item si invalida immediatamente la sua PTE (e il TLB) con
+    \code{markPageNotValid}, così che nessuno possa più accedervi
+    ``credendola'' ancora presente mentre viene scritta sul disco;
+  \item si scrive il contenuto del frame sul backing store \emph{della
+    vittima} (\code{flashOperation(victimAsid, victimPage, fa,
+    FLASHWRITE)}); se l'operazione fallisce (\code{status != READY}), si
+    rilascia il mutex e si termina la U-proc \emph{corrente} (quella che ha
+    causato il fault, non la vittima) come errore di I/O fatale.
+  \end{itemize}
+\item \textbf{Caricamento della pagina richiesta}: si legge dal backing
+  store \emph{della U-proc corrente} il blocco \code{p} nel frame appena
+  liberato (\code{flashOperation(sup->sup\_asid, p, fa, FLASHREAD)}); stesso
+  trattamento in caso di errore.
+\item \textbf{Aggiornamento della Swap Pool table} per il frame \code{i}:
+  ora contiene la pagina \code{p} della U-proc corrente, con un puntatore
+  diretto alla sua PTE (utile per un futuro, rapido sfratto).
+\item \textbf{Aggiornamento atomico di Page Table + TLB} con
+  \code{markPagePresent}: la PTE della U-proc corrente per la pagina
+  \code{p} viene marcata presente, puntando al frame fisico appena
+  caricato.
+\item \textbf{Rilascio del mutex} e \textbf{ripresa della U-proc}
+  (\code{LDST(exState)}): l'istruzione che aveva causato il fault verrà
+  rieseguita da capo, questa volta trovando la traduzione valida.
+\end{enumerate}
+
+\subsection{TLB-Refill vs Pager: la distinzione più chiesta all'esame}
+\label{sub:tlbrefill-vs-pager}
+\begin{center}
+\begin{tabular}{@{}lp{5.6cm}p{5.6cm}@{}}
+\toprule
+ & \textbf{TLB-Refill (\code{uTLB\_RefillHandler})} & \textbf{Pager (\code{pager})} \\
+\midrule
+Dove & \code{phase2/exceptions.c}, guardato da \code{\#ifdef SUPPORT\_LEVEL} &
+  \code{phase3/vmSupport.c} \\
+Quando scatta & la traduzione è \emph{già presente} in Page Table
+  (\code{V=1}) ma non è nel TLB (cache) & la pagina è \emph{assente} in Page
+  Table (\code{V=0}): non è mai stata caricata o è stata sfrattata \\
+Costo & rapidissimo: solo una copia PTE$\to$TLB
+  (\code{setENTRYHI}/\code{setENTRYLO}/\code{TLBWR}) & costoso: può
+  richiedere di scrivere una pagina vittima su flash e di leggerne una
+  nuova (due operazioni di I/O bloccanti) \\
+Tocca il disco & mai & sì, se necessario (sfratto + lettura) \\
+Registrato come & \code{tlb\_refill\_handler} nel Pass Up Vector (percorso
+  hardware dedicato) & raggiunto via \code{passUpOrDie(PGFAULTEXCEPT)}
+  $\to$ \code{LDCXT} al context configurato in \code{launchUproc} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Il TLB è una \emph{cache} delle traduzioni contenute nella Page Table: può
+contenere solo poche entry alla volta, quindi anche una pagina
+\emph{presente} in memoria può generare un evento di TLB-Refill se la sua
+traduzione non è (più) nella cache. Solo quando la pagina non è affatto in
+memoria (bit \code{V=0}) si tratta di un vero page fault, di competenza del
+Pager.
+
+\subsection{Perché installare la traduzione direttamente nel TLB
+(\code{markPagePresent})}
+La specifica di Pandos ammette due strategie equivalenti per aggiornare il
+TLB dopo che il Pager ha reso presente una pagina: (a) limitarsi a
+\code{TLBCLR} e lasciare che sia un successivo evento di TLB-Refill a
+ripopolare l'entry quando servirà; oppure (b) individuare/scrivere
+direttamente la entry nel TLB. Questa implementazione ha scelto (una
+variante di) la strategia (b) \emph{dopo aver diagnosticato un problema
+concreto}: in alcune situazioni l'evento di TLB-Refill non veniva
+rigenerato in modo affidabile subito dopo l'intervento del Pager, e la
+U-proc restava intrappolata in un \textbf{page-fault loop} (l'accesso che
+riprendeva dopo il fault ritrovava ancora una traduzione mancante nel TLB,
+rigenerando lo stesso fault all'infinito). Scrivendo la traduzione
+direttamente nel TLB dentro \code{markPagePresent}, l'accesso che riprende
+subito dopo (\code{LDST(exState)}) trova già la entry pronta, eliminando il
+problema.
+
+% ============================================================
+\section{\code{phase3/sysSupport.c} --- syscall del Support Level}
+\label{sec:syssupport-fase3}
+% ============================================================
+
+\subsection{\func{supTerminate} --- terminazione ordinata di una U-proc}
+\begin{lstlisting}
+void supTerminate(int asid) {
+    SYSCALL(PASSEREN, (int)&swapPoolSem, 0, 0);
+    for (int i = 0; i < SWAP_POOL_SIZE; i++)
+        if (swapPool[i].sw_asid == asid)
+            swapPool[i].sw_asid = SWAP_FRAME_FREE;
+    SYSCALL(VERHOGEN, (int)&swapPoolSem, 0, 0);
+
+    if (asid == 1)
+        SYSCALL(VERHOGEN, (int)&masterSemaphore, 0, 0);
+    else
+        SYSCALL(VERHOGEN, (int)&shellSemaphore, 0, 0);
+
+    SYSCALL(TERMPROCESS, 0, 0, 0);
+}
+\end{lstlisting}
+Questa è la funzione \emph{unica} tramite cui \textbf{qualunque} U-proc
+smette di esistere (che sia una terminazione volontaria via \code{TERMINATE},
+un errore fatale rilevato dal Pager, o un program trap gestito dal general
+exception handler): mai una U-proc chiama direttamente
+\code{SYSCALL(TERMPROCESS, ...)} senza passare da qui.
+
+\begin{enumerate}
+\item \textbf{Libera i frame dello Swap Pool} occupati da questa U-proc
+  (sotto \code{swapPoolSem}): scorre tutta la tabella e marca come liberi
+  (\code{SWAP\_FRAME\_FREE}) tutti i frame il cui \code{sw\_asid} coincide
+  con l'ASID che sta terminando. \`E un passo essenziale: senza di esso, un
+  futuro sfratto potrebbe tentare di scrivere sul backing store di una
+  U-proc ormai terminata (e magari già sostituita da una nuova U-proc con
+  lo stesso ASID, dato che gli ASID vengono riusati), corrompendone i dati.
+\item \textbf{Sblocca l'attendente giusto} in base all'ASID: se la U-proc
+  che termina è la \textbf{shell} (\code{ASID=1}), fa una V su
+  \code{masterSemaphore} (sbloccando l'InstantiatorProcess, che porterà
+  alla \code{HALT} finale); altrimenti (una qualunque U-proc \emph{figlia}
+  lanciata dalla shell tramite \code{EXECUTE}) fa una V su
+  \code{shellSemaphore} (sbloccando la shell, che tornerà al prompt). Questa
+  distinzione realizza esplicitamente la \textbf{catena di attesa} a due
+  livelli: figlia $\to$ shell $\to$ InstantiatorProcess.
+\item \textbf{Terminazione effettiva} tramite il Nucleus:
+  \code{SYSCALL(TERMPROCESS, 0, 0, 0)} (\code{a1=0}: termina se stesso). Da
+  questo punto il PCB della U-proc viene distrutto dal Nucleus (Fase 2); la
+  funzione non ritorna mai.
+\end{enumerate}
+
+\subsection{SYS4 --- \func{writeTerminal}}
+\begin{lstlisting}
+static int writeTerminal(support_t *sup, char *virtAddr, int len) {
+    if ((memaddr)virtAddr < KUSEG || (memaddr)virtAddr >= USERSTACKTOP ||
+        len < 0 || len > MAXSTRLEN) {
+        supTerminate(sup->sup_asid);
+    }
+
+    termreg_t *term  = (termreg_t *) DEV_REG_ADDR(IL_TERMINAL, 0);
+    int        mutex = TERMW_MUTEX(0);
+
+    SYSCALL(PASSEREN, (int)&devMutex[mutex], 0, 0);
+
+    int i;
+    for (i = 0; i < len; i++) {
+        unsigned int cmd =
+            (((unsigned int)(unsigned char)virtAddr[i]) << 8) | TRANSMITCHAR;
+        unsigned int status =
+            SYSCALL(DOIO, (int)&term->transm_command, (int)cmd, 0);
+        if ((status & 0xFF) != OKCHARTRANS) {
+            SYSCALL(VERHOGEN, (int)&devMutex[mutex], 0, 0);
+            return -(int)(status & 0xFF);
+        }
+    }
+
+    SYSCALL(VERHOGEN, (int)&devMutex[mutex], 0, 0);
+    return i;
+}
+\end{lstlisting}
+Scrive \code{len} caratteri dal buffer \code{virtAddr} (indirizzo
+\emph{logico}, nello spazio della U-proc chiamante) sul terminale 0
+(condiviso da tutte le U-proc e dalla shell).
+\begin{enumerate}
+\item \textbf{Validazione dell'indirizzo}: deve cadere dentro lo spazio
+  logico \code{[KUSEG, USERSTACKTOP)} della U-proc, e la lunghezza deve
+  essere non negativa e non superiore a \code{MAXSTRLEN} (128). Se la
+  richiesta è malformata, si applica la politica ``input non valido $\to$
+  program trap'': la U-proc viene terminata immediatamente
+  (\code{supTerminate}, che non ritorna).
+\item \textbf{Mutua esclusione}: acquisisce il mutex dedicato alla
+  \emph{scrittura} sul terminale 0 (\code{TERMW\_MUTEX(0)}) --- distinto dal
+  mutex di lettura, perché TX e RX sono canali indipendenti e serializzarli
+  insieme impedirebbe inutilmente scritture e letture concorrenti da parte
+  di U-proc diverse.
+\item \textbf{Ciclo di trasmissione}: per ciascun carattere, compone il
+  comando (carattere nel byte alto, opcode \code{TRANSMITCHAR} nel byte
+  basso) e lo emette con \code{DOIO} (bloccando finché il carattere non è
+  stato trasmesso). Se lo status ricevuto non è \code{OKCHARTRANS} (5,
+  successo), l'operazione si interrompe restituendo lo status come valore
+  \emph{negativo} (convenzione: successo $\to$ numero di caratteri scritti,
+  errore $\to$ codice di errore negato).
+\item Rilascia il mutex e ritorna il numero di caratteri effettivamente
+  scritti (o l'errore).
+\end{enumerate}
+
+\subsection{SYS5 --- \func{readTerminal}}
+\begin{lstlisting}
+static int readTerminal(support_t *sup, char *virtAddr) {
+    if ((memaddr)virtAddr < KUSEG || (memaddr)virtAddr >= USERSTACKTOP) {
+        supTerminate(sup->sup_asid);
+    }
+
+    termreg_t *term  = (termreg_t *) DEV_REG_ADDR(IL_TERMINAL, 0);
+    int        mutex = TERMR_MUTEX(0);
+
+    SYSCALL(PASSEREN, (int)&devMutex[mutex], 0, 0);
+
+    int count = 0;
+    int done  = 0;
+    while (!done) {
+        unsigned int status =
+            SYSCALL(DOIO, (int)&term->recv_command, (int)RECEIVECHAR, 0);
+        if ((status & 0xFF) != CHARRECV) {
+            SYSCALL(VERHOGEN, (int)&devMutex[mutex], 0, 0);
+            return -(int)(status & 0xFF);
+        }
+        char c = (char)((status >> 8) & 0xFF);
+        virtAddr[count++] = c;
+        if (c == '\n') done = 1;
+    }
+
+    SYSCALL(VERHOGEN, (int)&devMutex[mutex], 0, 0);
+    return count;
+}
+\end{lstlisting}
+Legge caratteri dal terminale 0 nel buffer \code{virtAddr}
+\textbf{finché non incontra un \code{'\textbackslash n'}} (un vero
+``leggi una riga''). Stessa validazione dell'indirizzo di
+\code{writeTerminal} (qui senza controllo su una lunghezza massima, dato che
+non è un parametro della syscall). Acquisisce il mutex \emph{di lettura}
+(\code{TERMR\_MUTEX(0)}, indipendente da quello di scrittura). Ciclo: ad
+ogni iterazione emette un comando \code{RECEIVECHAR} con \code{DOIO}
+(bloccando finché non arriva un carattere), estrae il carattere ricevuto
+dal byte alto dello status, lo scrive nel buffer e incrementa il contatore;
+il ciclo termina quando il carattere letto è \code{'\textbackslash n'}. Se
+in un qualunque momento lo status non è \code{CHARRECV} (5), l'operazione si
+interrompe restituendo l'errore negato. Al termine restituisce il numero di
+caratteri letti (incluso il \code{'\textbackslash n'} finale).
+
+\subsection{SYS6 --- \func{doExecute}}
+\begin{lstlisting}
+static int doExecute(int asid) {
+    if (asid < 1 || asid > UPROCMAX)
+        return -1;
+    launchUproc(asid);
+    SYSCALL(PASSEREN, (int)&shellSemaphore, 0, 0);
+    return 0;
+}
+\end{lstlisting}
+Implementa la syscall con cui la shell lancia un nuovo programma: valida che
+l'ASID richiesto sia nell'intervallo \code{[1, UPROCMAX]} (altrimenti
+ritorna \code{-1} senza fare nulla --- \emph{non} termina il chiamante, a
+differenza delle altre syscall: è un errore ``recuperabile'', gestito dalla
+shell stessa che stampa un messaggio e richiede un nuovo comando), poi
+chiama \code{launchUproc(asid)} (la stessa funzione usata
+dall'InstantiatorProcess per lanciare la shell) e \textbf{si blocca} su
+\code{shellSemaphore}: è esattamente questo blocco che rende la shell
+\textbf{sincrona} --- un solo programma alla volta, il prompt torna
+disponibile solo dopo che il programma appena lanciato ha eseguito
+\code{supTerminate} (che, per un ASID $\ne 1$, fa la V liberatoria proprio
+su \code{shellSemaphore}).
+
+\subsection{\func{supSyscallHandler} --- dispatcher delle syscall}
+\begin{lstlisting}
+static void supSyscallHandler(support_t *sup, state_t *state) {
+    int number = (int)state->reg_a0;
+    int result = 0;
+
+    switch (number) {
+        case SUP_TERMINATE:
+            supTerminate(sup->sup_asid);
+            return;
+
+        case SUP_WRITETERMINAL:
+            result = writeTerminal(sup, (char *)state->reg_a1, (int)state->reg_a2);
+            break;
+
+        case SUP_READTERMINAL:
+            result = readTerminal(sup, (char *)state->reg_a1);
+            break;
+
+        case SUP_EXECUTE:
+            result = doExecute((int)state->reg_a1);
+            break;
+
+        default:
+            supTerminate(sup->sup_asid);
+            return;
+    }
+
+    state->reg_a0  = (unsigned int)result;
+    state->pc_epc += WORDLEN;
+    LDST(state);
+}
+\end{lstlisting}
+Legge il numero di syscall da \code{a0} e smista alle quattro funzioni viste
+sopra. Le syscall \code{TERMINATE} \emph{non ritornano mai} qui (chiamano
+\code{supTerminate} che a sua volta non ritorna). Le altre tre restituiscono
+un intero (\code{result}), che al termine dello \code{switch} viene scritto
+in \code{a0} dello stato salvato; il PC viene avanzato di una word (per non
+rieseguire la \code{ecall} originale) e si riprende la U-proc con
+\code{LDST}. Qualunque numero di syscall non riconosciuto (fuori dai quattro
+gestiti) viene trattato come errore fatale: \code{supTerminate}.
+
+\subsection{\func{generalExceptionHandler} --- il punto di ingresso dal Nucleus}
+\begin{lstlisting}
+void generalExceptionHandler(void) {
+    support_t *sup   = (support_t *) SYSCALL(GETSUPPORTPTR, 0, 0, 0);
+    state_t   *state = &sup->sup_exceptState[GENERALEXCEPT];
+
+    unsigned int excCode = state->cause & CAUSE_EXCCODE_MASK;
+
+    if (excCode == EXC_ECU) {
+        supSyscallHandler(sup, state);
+    } else {
+        supTerminate(sup->sup_asid);
+    }
+}
+\end{lstlisting}
+Questo è l'indirizzo configurato in \code{launchUproc} come
+\code{sup\_exceptContext[GENERALEXCEPT].pc}: è dove il Nucleus salta
+(tramite \code{passUpOrDie(GENERALEXCEPT)} $\to$ \code{LDCXT}) per
+\emph{qualunque} eccezione non-page-fault generata da una U-proc: syscall
+positive (\code{a0} $\ge 1$), program trap generici (istruzioni illegali,
+accessi non allineati, ecc.). Recupera la propria support structure
+(\code{GETSUPPORTPTR}) e lo stato salvato in
+\code{sup\_exceptState[GENERALEXCEPT]}; distingue:
+\begin{itemize}
+\item se l'\code{ExcCode} è \code{EXC\_ECU} (8, \code{ecall} da user-mode):
+  è davvero una richiesta di syscall $\to$ \code{supSyscallHandler};
+\item altrimenti: è un vero \textbf{program trap} (errore di programma) $\to$
+  terminazione immediata della U-proc con \code{supTerminate}.
+\end{itemize}
+Questa è la politica generale della Fase 3: \emph{qualunque} eccezione
+imprevista o input malformato porta sempre e solo alla terminazione
+ordinata della U-proc coinvolta, mai a un crash del sistema.
+
+% ============================================================
+\section{Il boot delle U-proc: \code{crtsi.S} e \code{libuser.h}}
+% ============================================================
+
+\subsection{\code{testers/crtsi.S} --- lo startup in assembly}
+\begin{lstlisting}
+#define TEXT_VADDR 0x80000000
+#define TERMINATE_SYSCALL 2
+
+    .text
+    .align  2
+    .globl  __start
+    .type   __start, @function
+    .extern main
+__start:
+    li  t0, TEXT_VADDR + (AOUT_HE_GP_VALUE << 2)
+    lw  gp, 0(t0)
+
+    addi    sp, sp, -16
+    jal main
+    addi    sp, sp, 16
+
+    li  a0, TERMINATE_SYSCALL
+    ecall
+    /* Not reached! */
+    .end    __start
+    .size   __start, .-__start
+\end{lstlisting}
+Ogni programma utente in \code{testers/} (shell, echo, fibEleven, uname, sl,
+calc) viene collegato con questo modulo assembly (insieme a
+\code{liburiscv.S} della libreria di sistema): è il ``C runtime startup'',
+l'equivalente per le U-proc di ciò che \code{crtso.S} è per il kernel. È
+codice che gira interamente in \textbf{user-mode}, eseguito \emph{prima} di
+\code{main}.
+\begin{enumerate}
+\item Definisce il simbolo \code{\_\_start}, che il linker (con lo script
+  \code{uriscvaout.ldscript}) colloca esattamente all'indirizzo
+  \code{0x800000B0} (\code{UPROCSTARTADDR}), cioè subito dopo l'header
+  \code{.aout} che precede il \code{.text} vero e proprio (che parte a
+  \code{0x80000000 = TEXT\_VADDR}). \`E questo, non \code{main}, il punto in
+  cui \code{launchUproc} fa partire il PC della U-proc.
+\item \textbf{Carica il \emph{global pointer}} (\code{gp}) leggendo il suo
+  valore dall'header \code{.aout} (campo \code{AOUT\_HE\_GP\_VALUE},
+  posizionato appena dopo \code{TEXT\_VADDR}): senza \code{gp} correttamente
+  inizializzato, l'accesso a variabili globali/statiche del programma
+  (indirizzate in modo relativo a \code{gp} nella convenzione RISC-V)
+  fallirebbe.
+\item \textbf{Alloca un piccolo frame} sullo stack (16 byte, per
+  allineamento) e chiama \code{main} con \code{jal} (lo \code{sp} iniziale
+  --- \code{0xC0000000} --- è già stato impostato dal kernel in
+  \code{launchUproc}, prima che questo codice inizi a girare).
+\item \textbf{Se \code{main} ritorna} (comportamento normale per la maggior
+  parte dei programmi di test, tranne la shell che ha un loop infinito),
+  imposta \code{a0 = TERMINATE\_SYSCALL} (2, cioè la stessa
+  \code{SUP\_TERMINATE} del Support Level) ed esegue \code{ecall}: questa è
+  a tutti gli effetti una \textbf{SYS2} (\code{TERMINATE}) che fa terminare
+  la U-proc in modo pulito attraverso \code{supTerminate}. \textbf{Senza
+  questo passo}, il ritorno da \code{main} (un semplice \code{ret})
+  salterebbe a un indirizzo di ritorno indefinito/casuale sullo stack,
+  causando un comportamento imprevedibile o un crash.
+\end{enumerate}
+La shell (\code{shell.c}) non sfrutta mai questa via di uscita: il suo
+\code{main} contiene un ciclo infinito e termina \emph{solo} tramite una
+chiamata esplicita a \code{u\_terminate()} (comando \code{exit}).
+
+\subsection{\code{testers/h/libuser.h} --- la mini libreria utente}
+\begin{lstlisting}
+#define TERMINATE      2
+#define WRITETERMINAL  4
+#define READTERMINAL   5
+#define EXECUTE        6
+
+static void u_print(const char *s) {
+    SYSCALL(WRITETERMINAL, (unsigned int)s, u_strlen(s), 0);
+}
+static int u_readline(char *buf) {
+    return (int)SYSCALL(READTERMINAL, (unsigned int)buf, 0, 0);
+}
+static int u_execute(int asid) {
+    return (int)SYSCALL(EXECUTE, (unsigned int)asid, 0, 0);
+}
+static void u_terminate(void) {
+    SYSCALL(TERMINATE, 0, 0, 0);
+}
+\end{lstlisting}
+\`E un header \emph{header-only} condiviso da tutti i programmi
+\code{testers/}: fornisce wrapper minimi attorno alle quattro syscall del
+Support Level
+(\code{u\_print}, \code{u\_readline}, \code{u\_execute},
+\code{u\_terminate}), più utility di conversione stringa/intero
+(\code{u\_strlen}, \code{u\_itoa}, \code{u\_printint}), tutte scritte da
+zero (non esiste una libc: le U-proc sono ``freestanding'', senza
+runtime C standard).
+
+% ============================================================
+\section{La shell interattiva (\code{testers/shell.c})}
+% ============================================================
+
+\begin{lstlisting}
+static int nameToAsid(const char *name) {
+    if (u_strcmp(name, "echo")      == 0) return 2;
+    if (u_strcmp(name, "fibEleven") == 0) return 3;
+    if (u_strcmp(name, "uname")     == 0) return 4;
+    if (u_strcmp(name, "sl")        == 0) return 5;
+    if (u_strcmp(name, "calc")      == 0) return 6;
+    return -1;
+}
+
+void main(void) {
+    char buf[128];
+    u_print("PandOSsh shell\n");
+    u_print("comandi: echo fibEleven uname sl calc | exit\n");
+
+    while (1) {
+        u_print("> ");
+        int n = u_readline(buf);
+        if (n > 0 && buf[n - 1] == '\n') buf[n - 1] = '\0';
+        else buf[n] = '\0';
+
+        if (buf[0] == '\0') continue;
+
+        if (u_strcmp(buf, "exit") == 0) {
+            u_print("shell: arrivederci\n");
+            u_terminate();
+        }
+
+        int asid = nameToAsid(buf);
+        if (asid < 0) { u_print("shell: programma sconosciuto\n"); continue; }
+
+        u_execute(asid);
+    }
+}
+\end{lstlisting}
+La shell (ASID 1, unica U-proc lanciata direttamente
+dall'InstantiatorProcess) implementa un semplice interprete a riga di
+comando:
+\begin{enumerate}
+\item Stampa un banner e il prompt \code{"> "}.
+\item Legge una riga (\code{u\_readline}, bloccante fino a \code{'\textbackslash
+  n'}), rimuove il newline finale sostituendolo con il terminatore di
+  stringa.
+\item Riga vuota $\to$ richiede subito un nuovo prompt (\code{continue}).
+\item Comando \code{"exit"} $\to$ stampa un messaggio di commiato e chiama
+  \code{u\_terminate()} (SYS2): non ritorna mai; scatena la catena
+  \code{supTerminate(1)} $\to$ V su \code{masterSemaphore} $\to$
+  l'InstantiatorProcess si sblocca e porta il sistema a \code{HALT}.
+\item Altrimenti, traduce il nome del comando in un ASID tramite la
+  mappatura statica \code{nameToAsid} (ogni programma è precaricato su un
+  proprio device flash dedicato, secondo la corrispondenza \code{ASID-1 =
+  numero del flash}: shell$\to$flash0, echo$\to$flash1,
+  fibEleven$\to$flash2, uname$\to$flash3, sl$\to$flash4, calc$\to$flash5).
+  Se il nome non è riconosciuto, avvisa e richiede un nuovo comando; se è
+  valido, chiama \code{u\_execute(asid)} (SYS6), che \textbf{blocca la
+  shell} finché il programma lanciato non termina, per poi tornare al
+  prompt.
+\end{enumerate}
+
+% ============================================================
+\section{I programmi U-proc lanciabili dalla shell (\code{testers/})}
+% ============================================================
+
+Oltre alla shell (che gira sempre come ASID 1), \code{testers/} contiene
+cinque piccoli programmi utente, ciascuno collegato con lo stesso
+\code{crtsi.S} e la stessa \code{libuser.h} viste sopra, e ciascuno
+precaricato sul proprio device flash dedicato (\code{ASID-1 = numero del
+flash}, coerentemente con \code{nameToAsid} in \code{shell.c} e con
+\code{flashOperation} in \code{vmSupport.c}). Sono programmi
+\emph{applicativi}, non toccano mai direttamente memoria virtuale o
+Nucleus: usano esclusivamente le quattro syscall wrapper di
+\code{libuser.h} (\code{u\_print}, \code{u\_readline}, \code{u\_execute},
+\code{u\_terminate}). Il loro scopo è duplice: dimostrare che la
+paginazione a domanda funziona per programmi realmente eseguiti (ogni
+istruzione e ogni stringa che leggono risiede in pagine caricate a runtime
+dal Pager) e coprire i casi richiesti esplicitamente dalla specifica di
+Phase 3 (una calcolatrice, un echo, ecc.).
+
+\subsection{\code{echo.c} --- ASID 2}
+\begin{lstlisting}
+#include "h/libuser.h"
+
+void main(void) {
+    char buf[128];
+
+    u_print("echo> ");
+    int n = u_readline(buf);
+    if (n < 0) return;
+
+    SYSCALL(WRITETERMINAL, (unsigned int)buf, n, 0);
+}
+\end{lstlisting}
+Il più semplice dei cinque: stampa un prompt, legge una riga
+(\code{u\_readline}, bloccante fino a \code{'\textbackslash n'}, SYS5), e se
+la lettura non ha restituito un errore (\code{n < 0}, caso in cui la
+funzione ritorna subito, terminando il programma tramite il consueto
+epilogo di \code{crtsi.S}) la ristampa \emph{esattamente com'è}, incluso il
+newline finale, con una chiamata \textbf{diretta} a
+\code{SYSCALL(WRITETERMINAL, ...)} (SYS4) invece di passare per il wrapper
+\code{u\_print} --- equivalente, ma dimostra che \code{u\_print} non è
+altro che un caso particolare (con \code{u\_strlen} calcolato
+internamente) della stessa syscall. Verifica quindi in un colpo solo sia
+\code{READTERMINAL} sia \code{WRITETERMINAL}.
+
+\subsection{\code{fibEleven.c} --- ASID 3}
+\begin{lstlisting}
+#include "h/libuser.h"
+
+static int fib(int n) {
+    int a = 0, b = 1;
+    for (int i = 0; i < n; i++) {
+        int t = a + b;
+        a = b;
+        b = t;
+    }
+    return a;
+}
+
+void main(void) {
+    u_print("fib(11) = ");
+    u_printint(fib(11));
+    u_print("\n");
+}
+\end{lstlisting}
+Programma puramente computazionale, senza input: calcola l'undicesimo
+numero della sequenza di Fibonacci con un semplice ciclo iterativo (non
+ricorsivo: evita di stressare inutilmente lo stack), poi lo stampa con
+\code{u\_printint} (che internamente usa \code{u\_itoa} per convertirlo in
+stringa decimale prima di passarlo a \code{u\_print}). Il nome ricorda che
+in molte varianti storiche di Pandos un programma equivalente calcolava un
+altro indice della sequenza; qui è fissato a 11. È il candidato ideale per
+verificare che il \textbf{codice} (non solo i dati) di una U-proc venga
+paginato correttamente: l'intero corpo di \code{fib} e \code{main} deve
+essere caricato dal Pager (pagine \code{.text}) prima di poter essere
+eseguito.
+
+\subsection{\code{uname.c} --- ASID 4}
+\begin{lstlisting}
+#include "h/libuser.h"
+
+void main(void) {
+    u_print("PandOSsh - Support Level (Phase 3) - uRISCV\n");
+}
+\end{lstlisting}
+Il programma più minimale possibile: stampa una singola stringa fissa,
+imitando l'omonimo comando Unix \code{uname} (che riporta il nome del
+sistema). Serve soprattutto come ``smoke test'' per verificare rapidamente
+che il ciclo \code{EXECUTE} $\to$ \code{launchUproc} $\to$ page fault sul
+primo accesso a \code{.text} $\to$ esecuzione $\to$ \code{TERMINATE} $\to$
+\code{supTerminate} funzioni end-to-end senza alcuna altra variabile in
+gioco (nessun input, nessun calcolo).
+
+\subsection{\code{sl.c} --- ASID 5}
+\begin{lstlisting}
+#include "h/libuser.h"
+
+void main(void) {
+    u_print("      ====        ________                ___________\n");
+    u_print("  _D _|  |_______/        \\__I_I_____===__|_________|\n");
+    /* ... altre righe di ASCII art ... */
+    u_print("PandOSsh locomotive\n");
+}
+\end{lstlisting}
+Riferimento scherzoso al comando Unix \code{sl} (uno scherzo storico che
+``punisce'' chi digita \code{sl} invece di \code{ls} mostrando un trenino
+ASCII che attraversa lo schermo): qui è semplicemente una sequenza di
+\code{u\_print} che stampa più righe di ASCII art. Dal punto di vista
+tecnico non introduce nulla di nuovo rispetto a \code{uname.c}, ma essendo
+un programma più lungo (più stringhe, quindi potenzialmente più pagine
+\code{.text} coinvolte) esercita più a fondo il caso in cui una singola
+esecuzione tocca diverse pagine di codice in sequenza.
+
+\subsection{\code{calc.c} --- ASID 6}
+\begin{lstlisting}
+#include "h/libuser.h"
+
+static void itoa(int v, char *out) {
+    char tmp[16];
+    int  i = 0, j = 0, neg = 0;
+    if (v == 0) { out[0] = '0'; out[1] = '\0'; return; }
+    if (v < 0)  { neg = 1; v = -v; }
+    while (v > 0) { tmp[i++] = (char)('0' + (v % 10)); v /= 10; }
+    if (neg) out[j++] = '-';
+    while (i > 0) out[j++] = tmp[--i];
+    out[j] = '\0';
+}
+
+void main(void) {
+    char buf[128];
+    char out[32];
+
+    u_print("calc: inserisci <cifra><op><cifra> (es. 7*8): ");
+    int n = u_readline(buf);
+
+    if (n < 3) {
+        u_print("calc: input non valido\n");
+        return;
+    }
+
+    int  a  = buf[0] - '0';
+    char op = buf[1];
+    int  b  = buf[2] - '0';
+    int  r  = 0;
+    int  ok = 1;
+
+    switch (op) {
+        case '+': r = a + b; break;
+        case '-': r = a - b; break;
+        case '*': r = a * b; break;
+        case '/': if (b == 0) ok = 0; else r = a / b; break;
+        default:  ok = 0;
+    }
+
+    if (!ok) {
+        u_print("calc: operazione non valida\n");
+        return;
+    }
+
+    u_print("calc: risultato = ");
+    itoa(r, out);
+    u_print(out);
+    u_print("\n");
+}
+\end{lstlisting}
+Il programma applicativo più completo dei cinque, esplicitamente richiesto
+dalla specifica della Phase 3: una calcolatrice a riga di comando che
+accetta espressioni nella forma rigida \code{<cifra><op><cifra>} (una sola
+cifra decimale per operando, un solo carattere di operatore --- non un vero
+parser, ma sufficiente per lo scopo dimostrativo).
+\begin{enumerate}
+\item Ha una propria copia locale di \code{itoa} (identica nella logica a
+  \code{u\_itoa} di \code{libuser.h}, ma duplicata invece di essere
+  riutilizzata: \code{libuser.h} è header-only e ogni U-proc è compilata e
+  linkata in modo del tutto indipendente dalle altre, quindi non c'è
+  condivisione automatica di codice applicativo oltre a quanto già offerto
+  da \code{libuser.h} stessa) usata per convertire il risultato in stringa
+  prima di stamparlo.
+\item Legge una riga con \code{u\_readline}; se contiene meno di 3
+  caratteri (\code{n < 3}) l'input è per costruzione malformato (non può
+  contenere \code{<cifra><op><cifra>}) e il programma stampa un errore e
+  ritorna (terminazione pulita via \code{crtsi.S}, \emph{non} un program
+  trap: qui l'errore è di logica applicativa, gestito dal programma
+  stesso, non un accesso a memoria invalida).
+\item Estrae i tre caratteri (\code{buf[0]}, \code{buf[1]}, \code{buf[2]}),
+  converte le due cifre da carattere ASCII a valore numerico
+  (\code{'0'} sottratto), ed esegue l'operazione richiesta con un normale
+  \code{switch}; la divisione per zero è esplicitamente controllata
+  (\code{ok = 0}) invece di lasciarla generare un errore hardware.
+\item Se l'operatore non è riconosciuto o la divisione non è valida,
+  stampa un messaggio di errore; altrimenti stampa il risultato
+  convertito in stringa.
+\end{enumerate}
+Rispetto agli altri quattro programmi, \code{calc.c} è quello che meglio
+dimostra l'uso \emph{combinato} di lettura (SYS5) e scrittura (SYS4) sul
+terminale all'interno di un'unica esecuzione, oltre a un minimo di logica
+di validazione dell'input --- lo stesso principio (``input malformato non
+deve mai compromettere il sistema'') applicato a un livello più
+grossolano dalle validazioni di \code{writeTerminal}/\code{readTerminal}
+nel Support Level (Sezione~\ref{sec:syssupport-fase3}).
+
+% ============================================================
+\section{La pipeline di compilazione: da \code{.c} a device flash}
+% ============================================================
+
+Esistono \textbf{due build indipendenti} nel progetto:
+\begin{enumerate}
+\item Il \textbf{kernel} (Nucleus + Support Level): il target CMake
+  \code{make phase3} compila tutti i moduli C del kernel (compresa la Fase
+  3) e produce \code{build/MultiPandOS.core.uriscv} --- il file che
+  l'emulatore carica come \code{core-file}, secondo
+  \code{phase3\_config\_machine.json}.
+\item I \textbf{programmi utente di test} (le U-proc): il \code{Makefile}
+  in \code{testers/} compila ciascun programma in una propria
+  \textbf{immagine flash}, indipendente dal core del kernel.
+\end{enumerate}
+
+\subsection{Il target \code{phase3} in \code{CMakeLists.txt}}
+\begin{lstlisting}
+add_executable(MultiPandOS_phase3 EXCLUDE_FROM_ALL
+    ./klog.c
+    phase1/pcb.c
+    phase1/asl.c
+    phase2/initial.c
+    phase2/scheduler.c
+    phase2/exceptions.c
+    phase2/interrupts.c
+    phase3/initProc.c
+    phase3/vmSupport.c
+    phase3/sysSupport.c
+    ${URISCV_SRC}/crtso.S
+    ${URISCV_SRC}/liburiscv.S
+)
+target_compile_definitions(MultiPandOS_phase3 PRIVATE SUPPORT_LEVEL)
+
+add_custom_target(phase3
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${PROJECT_BINARY_DIR}/MultiPandOS_phase3
+        ${PROJECT_BINARY_DIR}/MultiPandOS
+    COMMAND uriscv-elf2uriscv -k ${PROJECT_BINARY_DIR}/MultiPandOS
+    COMMAND ${CMAKE_MAKE_PROGRAM} -C ${CMAKE_SOURCE_DIR}/testers
+    BYPRODUCTS MultiPandOS.core.uriscv MultiPandOS.stab.uriscv
+    DEPENDS MultiPandOS_phase3
+)
+\end{lstlisting}
+Rispetto ai target \code{phase1}/\code{phase2} (documento di Fase 1), qui
+compaiono \emph{tutti e quattro} i moduli del Nucleus (\code{phase2/*.c},
+\emph{non} \code{p2test.c}: il processo iniziale \code{test} viene preso da
+\code{phase3/initProc.c}, non più dal test driver) più i tre moduli della
+Fase 3. Due dettagli decisivi:
+\begin{itemize}
+\item \code{target\_compile\_definitions(\ldots PRIVATE SUPPORT\_LEVEL)}:
+  è la macro di preprocessore che attiva il ramo \code{\#ifdef
+  SUPPORT\_LEVEL} in \code{uTLB\_RefillHandler} (\code{phase2/exceptions.c}
+  --- si veda la Sezione~\ref{sub:tlbrefill-vs-pager} di questo documento):
+  \emph{solo} compilando
+  questo target il TLB-Refill handler usa davvero la Page Table della
+  U-proc corrente invece dello skeleton placeholder della Fase 2 pura.
+\item il target \emph{custom} \code{phase3} include un
+  \textbf{comando aggiuntivo} rispetto a \code{phase1}/\code{phase2}:
+  \code{\$\{CMAKE\_MAKE\_PROGRAM\} -C \ldots/testers} invoca automaticamente
+  anche il \code{Makefile} di \code{testers/}, così che un singolo
+  \code{make phase3} produca sia il core del kernel sia le immagini flash
+  di tutte le U-proc, tenendole allineate.
+\end{itemize}
+
+\subsection{\code{testers/Makefile} --- compilazione delle U-proc}
+\begin{lstlisting}
+CFLAGS = -ffreestanding -nostdlib -nostartfiles -Wall -O0 -std=gnu99 \
+         -march=rv32imafd -mabi=ilp32d -I$(URISCV_INC) -Ih
+LDFLAGS = -nostdlib -nostartfiles -march=rv32imafd -mabi=ilp32d \
+          -T $(URISCV_SHARE)/uriscvaout.ldscript
+
+PROGS = shell echo fibEleven uname sl calc
+FLASHES = $(PROGS:%=%.uriscv)
+
+all: $(FLASHES)
+
+crtsi.o: crtsi.S
+	$(CC) $(CFLAGS) -c $< -o $@
+
+liburiscv.o: $(URISCV_SHARE)/liburiscv.S
+	$(CC) $(CFLAGS) -c $< -o $@
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+%.elf: %.o crtsi.o liburiscv.o
+	$(CC) $(LDFLAGS) crtsi.o $< liburiscv.o -o $@
+
+%.uriscv: %.elf
+	uriscv-elf2uriscv -a $<
+	uriscv-mkdev -f $@ $<.aout.uriscv
+
+clean:
+	rm -f *.o *.elf *.aout.uriscv $(FLASHES)
+\end{lstlisting}
+\`E un Makefile classico basato su \textbf{regole implicite con pattern}
+(\code{\%.o}, \code{\%.elf}, \code{\%.uriscv}): applicando la stessa
+sequenza di regole a ciascun nome in \code{PROGS} (\code{shell echo
+fibEleven uname sl calc}), produce automaticamente tutte e sei le immagini
+flash senza dover scrivere una regola separata per ognuna. Per ciascun
+programma \code{name.c}, la catena di trasformazioni è:
+\begin{enumerate}
+\item \textbf{\code{name.c} $\to$ \code{name.o}} (regola pattern generica
+  \code{\%.o: \%.c}): compilazione con gli stessi flag ``freestanding'' del
+  kernel (\code{-ffreestanding -nostdlib -nostartfiles}, nessuna libc), più
+  \code{-Ih} per trovare \code{testers/h/libuser.h}.
+\item \textbf{Link}: \code{name.o + crtsi.o + liburiscv.o} $\to$
+  \code{name.elf} (regola \code{\%.elf: \%.o crtsi.o liburiscv.o}), con lo
+  script linker \code{uriscvaout.ldscript} (diverso da
+  \code{uriscvcore.ldscript} usato per il kernel: produce un formato aout
+  eseguibile a partire da \code{0x80000000}, non un'immagine \code{.core}).
+  \code{crtsi.o} e \code{liburiscv.o} sono \textbf{oggetti condivisi} da
+  tutti i programmi (compilati una sola volta e riusati nel link di
+  ciascuno): è qui che entra in gioco \code{crtsi.S}, il cui simbolo
+  \code{\_\_start} finisce esattamente a \code{0x800000B0}
+  (\code{UPROCSTARTADDR}).
+\item \textbf{Conversione di formato}: \code{uriscv-elf2uriscv -a}
+  traduce l'ELF nel formato \textbf{\code{.aout}} (load image) atteso dalla
+  macchina virtuale $\to$ \code{name.elf.aout.uriscv}.
+\item \textbf{Creazione dell'immagine flash}: \code{uriscv-mkdev -f
+  name.uriscv name.elf.aout.uriscv} precarica il \code{.aout} su un device
+  flash virtuale $\to$ \code{name.uriscv} (regola \code{\%.uriscv:
+  \%.elf}).
+\end{enumerate}
+Il target \code{clean} rimuove tutti gli artefatti intermedi e le immagini
+finali, per una ricompilazione pulita.
+
+\textbf{Layout del flash} (il backing store di una U-proc): i blocchi
+\code{0}--\code{30} contengono le pagine di \code{.text}/\code{.data}, il
+blocco \code{31} la pagina di stack iniziale --- corrispondendo esattamente
+alle 32 entry della Page Table privata.
+
+\subsection{\code{phase3\_config\_machine.json} --- la configurazione dell'emulatore}
+\begin{lstlisting}
+{
+    "boot": {
+        "core-file": "build/MultiPandOS.core.uriscv",
+        "load-core-file": true
+    },
+    "devices": {
+        "flash0": { "enabled": true, "file": "testers/shell.uriscv" },
+        "flash1": { "enabled": true, "file": "testers/echo.uriscv" },
+        "flash2": { "enabled": true, "file": "testers/fibEleven.uriscv" },
+        "flash3": { "enabled": true, "file": "testers/uname.uriscv" },
+        "flash4": { "enabled": true, "file": "testers/sl.uriscv" },
+        "flash5": { "enabled": true, "file": "testers/calc.uriscv" },
+        "flash6": { "enabled": false, "file": "" },
+        "flash7": { "enabled": false, "file": "" },
+        "terminal0": { "enabled": true, "file": "term0.uriscv" }
+    },
+    "num-processors": 1,
+    "num-ram-frames": 256,
+    "symbol-table": { "asid": 64, "file": "build/MultiPandOS.stab.uriscv" },
+    "tlb-floor-address": "0x80000000",
+    "tlb-size": 16
+}
+\end{lstlisting}
+Rispetto a \code{config\_machine.json} usato in Fase 1/2 (documento di Fase
+1), tre differenze concrete che si ricollegano direttamente a ciò che
+questo documento ha spiegato:
+\begin{itemize}
+\item \textbf{Sei device flash abilitati} (\code{flash0}--\code{flash5}),
+  ciascuno puntato a un'immagine \code{testers/*.uriscv} generata dal
+  Makefile appena visto. La \textbf{mappatura è posizionale}: il device
+  \code{flashN} corrisponde all'ASID \code{N+1}, esattamente come calcolato
+  da \code{flashOperation} (\code{devNo = asid - 1}) in
+  \code{vmSupport.c}. \code{flash6}/\code{flash7} restano disabilitati:
+  \code{UPROCMAX = 8} ne permetterebbe fino a 8, ma solo 6 programmi sono
+  forniti.
+\item \code{num-ram-frames: 256}, molto più dei 64 di Fase 1/2: deve
+  ospitare i 32 frame riservati al Nucleus \emph{più} i 16 frame dello
+  Swap Pool \emph{più} margine per gli stack degli 8 possibili
+  \code{support\_t} (ciascuna con due stack da 500 word) --- la memoria
+  virtuale ha bisogno di ben più fisico spazio di manovra del semplice
+  Nucleus.
+\item \code{tlb-floor-address: "0x80000000"}: a differenza di Fase 1/2
+  (dove valeva \code{"0x0"}, nessuno spazio utente da proteggere), qui
+  coincide esattamente con \code{KUSEG}: dice all'hardware TLB dove inizia
+  lo spazio di indirizzamento \emph{utente} che deve essere tradotto
+  tramite le Page Table private delle U-proc (indirizzi sotto questa soglia
+  restano nello spazio kernel, mappato in modo diretto/identità).
+\end{itemize}
+
+\textbf{Da tenere bene a mente}: il flash \emph{non} è un filesystem
+generico, ma il backing store grezzo di \emph{una singola} U-proc. Il Pager
+lo legge a domanda (al verificarsi di un page fault) e vi riscrive le
+pagine \emph{dirty} sfrattate; non c'è alcuna nozione di file, directory o
+più programmi condivisi sullo stesso device.
+
+% ============================================================
+\section{Mappa riassuntiva della memoria (Fase 3)}
+% ============================================================
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Indirizzo} & \textbf{Costante} & \textbf{Contenuto} \\
+\midrule
+\code{0x20000000} & \code{RAMSTART} & inizio RAM; primi 32 frame riservati al Nucleus \\
+\code{0x20020000} & \code{SWAP\_POOL\_START} & inizio dei 16 frame dello Swap Pool \\
+\code{0x80000000} & \code{KUSEG} / \code{TEXT\_VADDR} & inizio spazio logico
+  di una U-proc (\code{.text}) \\
+\code{0x800000B0} & \code{UPROCSTARTADDR} & simbolo \code{\_\_start}, punto
+  di ingresso reale (dopo l'header \code{.aout}) \\
+\code{0xBFFFF000} & VPN \code{0xBFFFF} & pagina di stack logica (indice 31
+  della Page Table) \\
+\code{0xC0000000} & \code{USERSTACKTOP} & cima dello stack utente (valore
+  iniziale di \code{sp}) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+
+\end{document}
